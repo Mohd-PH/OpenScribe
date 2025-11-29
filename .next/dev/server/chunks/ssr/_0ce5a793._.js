@@ -16,44 +16,57 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$ne
 ;
 ;
 async function transcribeAudio(audioBlob, apiKey) {
-    // For demo purposes, we'll simulate transcription
-    // In production, you would use Whisper API with the provided apiKey
-    // Simulate processing time
-    await new Promise((resolve)=>setTimeout(resolve, 2000));
-    // For now, return a sample transcript
-    // In production: send audioBlob to Whisper API with apiKey
-    const sampleTranscript = `
-Doctor: Good morning, how are you feeling today?
-
-Patient: Not great, doctor. I've been having this persistent headache for about a week now.
-
-Doctor: I see. Can you describe the headache? Where is it located and how severe is it?
-
-Patient: It's mostly on the right side of my head, kind of behind my eye. I'd say it's about a 6 or 7 out of 10 on bad days.
-
-Doctor: Does anything make it better or worse?
-
-Patient: It gets worse when I'm looking at screens for too long. Resting in a dark room helps a bit.
-
-Doctor: Any other symptoms? Nausea, sensitivity to light, visual changes?
-
-Patient: Yeah, I've been a bit sensitive to bright lights. No nausea though.
-
-Doctor: Have you been under any unusual stress lately? Any changes in sleep patterns?
-
-Patient: Work has been pretty stressful. I've been sleeping maybe 5-6 hours a night instead of my usual 8.
-
-Doctor: Let me check your blood pressure and do a quick neurological exam.
-
-[Physical exam performed]
-
-Doctor: Your blood pressure is slightly elevated at 135/85. Neurological exam is normal. Based on your symptoms - the unilateral headache, photophobia, and association with stress and sleep deprivation - this appears to be a tension-type headache with some migraine features.
-
-Patient: Is that serious?
-
-Doctor: It's very manageable. I'd recommend starting with lifestyle modifications - prioritizing sleep, taking regular breaks from screens, and stress management. I'll also prescribe a mild pain reliever for acute episodes. If it doesn't improve in two weeks, we'll discuss preventive options.
-  `.trim();
-    return sampleTranscript;
+    console.log("=".repeat(80));
+    console.log("TRANSCRIBING AUDIO");
+    console.log("=".repeat(80));
+    console.log(`Audio blob size: ${audioBlob.size} bytes`);
+    console.log(`Audio blob type: ${audioBlob.type}`);
+    if (!apiKey) {
+        console.warn("⚠️  No API key provided - transcription will fail");
+        throw new Error("API key required for transcription");
+    }
+    try {
+        const formData = new FormData();
+        // Determine file extension based on blob type
+        let filename = "audio.webm";
+        if (audioBlob.type.includes("mp4")) {
+            filename = "audio.mp4";
+        } else if (audioBlob.type.includes("mpeg")) {
+            filename = "audio.mpeg";
+        } else if (audioBlob.type.includes("wav")) {
+            filename = "audio.wav";
+        }
+        formData.append("file", audioBlob, filename);
+        formData.append("model", "whisper-1");
+        console.log("📤 Sending audio to Whisper API...");
+        const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${apiKey}`
+            },
+            body: formData
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("❌ Whisper API error:", response.status, errorText);
+            throw new Error(`Whisper API error: ${response.status} - ${errorText}`);
+        }
+        const result = await response.json();
+        const transcript = result.text || "";
+        console.log("=".repeat(80));
+        console.log("TRANSCRIPTION COMPLETE");
+        console.log("=".repeat(80));
+        console.log("TRANSCRIBED TEXT:");
+        console.log("-".repeat(80));
+        console.log(transcript);
+        console.log("-".repeat(80));
+        console.log(`Transcript length: ${transcript.length} characters`);
+        console.log("=".repeat(80));
+        return transcript;
+    } catch (error) {
+        console.error("❌ Transcription failed:", error);
+        throw error;
+    }
 }
 async function generateClinicalNote(params) {
     const { transcript, patient_name, visit_reason, apiKey } = params;
@@ -62,61 +75,112 @@ async function generateClinicalNote(params) {
 IMPORTANT INSTRUCTIONS:
 - Output ONLY plain text in the exact format shown below
 - Do NOT use JSON, markdown code blocks, or any special formatting
-- Use ONLY information explicitly stated in the transcript
-- If a section has no relevant information, write "Not discussed"
+- Use ONLY information explicitly stated in the transcript itself
+- Do NOT use patient name or visit reason to infer or invent any information
+- If a section has no relevant information in the transcript, leave it completely empty (just the section header followed by a blank line)
+- Do NOT add placeholder text like "Not discussed", "Not documented", "Not performed", or any other defaults
+- Do NOT infer, assume, or invent information - only include what is explicitly stated in the transcript
+- If the transcript is empty or has no relevant content, ALL sections must be left empty
 - Use professional medical terminology while keeping notes concise
 - This is a DRAFT that requires clinician review
 
 OUTPUT FORMAT (follow exactly):
 
 Chief Complaint:
-[Primary reason for visit in 1-2 sentences]
+[Primary reason for visit in 1-2 sentences, or leave empty if not stated]
 
 HPI:
-[History of present illness - onset, duration, character, severity, modifying factors]
+[History of present illness - onset, duration, character, severity, modifying factors, or leave empty if not stated]
 
 ROS:
-[Review of systems - symptoms mentioned, organized by system]
+[Review of systems - symptoms mentioned, organized by system, or leave empty if not stated]
 
 Physical Exam:
-[Any exam findings mentioned, or "Not documented" if none]
+[Any exam findings mentioned, or leave empty if not stated]
 
 Assessment:
-[Clinical assessment/diagnosis mentioned by clinician]
+[Clinical assessment/diagnosis mentioned by clinician, or leave empty if not stated]
 
 Plan:
-[Treatment plan discussed with patient]`;
-    const userPrompt = `Convert this clinical encounter into a structured note.
+[Treatment plan discussed with patient, or leave empty if not stated]`;
+    console.log("=".repeat(80));
+    console.log("GENERATING CLINICAL NOTE");
+    console.log("=".repeat(80));
+    console.log(`Patient Name: ${patient_name || "Not provided"}`);
+    console.log(`Visit Reason: ${visit_reason || "Not provided"}`);
+    console.log(`Transcript length: ${transcript.length} characters`);
+    // If transcript is empty, return empty note structure
+    if (!transcript || transcript.trim().length === 0) {
+        console.log("⚠️  Transcript is empty - returning empty note structure");
+        const emptyNote = `Chief Complaint:
 
-Patient Name: ${patient_name || "Not provided"}
-Visit Reason: ${visit_reason || "Not provided"}
+
+HPI:
+
+
+ROS:
+
+
+Physical Exam:
+
+
+Assessment:
+
+
+Plan:`;
+        console.log("=".repeat(80));
+        console.log("FINAL CLINICAL NOTE (EMPTY):");
+        console.log("-".repeat(80));
+        console.log(emptyNote);
+        console.log("-".repeat(80));
+        console.log("=".repeat(80));
+        return emptyNote;
+    }
+    console.log("📝 Transcript being used for note generation:");
+    console.log("-".repeat(80));
+    console.log(transcript);
+    console.log("-".repeat(80));
+    const userPrompt = `Convert this clinical encounter transcript into a structured note. Use ONLY the information explicitly stated in the transcript below. Do not infer or invent any information.
+
+Patient Name: ${patient_name || "Not provided"} (for reference only - do not use to infer information)
+Visit Reason: ${visit_reason || "Not provided"} (for reference only - do not use to infer information)
 
 TRANSCRIPT:
 ${transcript}
 
-Generate the clinical note now, following the exact format specified.`;
+Generate the clinical note now, following the exact format specified. Only include information explicitly stated in the transcript above.`;
     try {
+        console.log("🤖 Calling LLM to generate clinical note...");
+        let text;
         if (apiKey) {
             const openai = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f40$ai$2d$sdk$2b$openai$40$2$2e$0$2e$72_zod$40$3$2e$25$2e$76$2f$node_modules$2f40$ai$2d$sdk$2f$openai$2f$dist$2f$index$2e$mjs__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["createOpenAI"])({
                 apiKey
             });
-            const { text } = await (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$ai$40$5$2e$0$2e$102_zod$40$3$2e$25$2e$76$2f$node_modules$2f$ai$2f$dist$2f$index$2e$mjs__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__$3c$locals$3e$__["generateText"])({
+            const result = await (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$ai$40$5$2e$0$2e$102_zod$40$3$2e$25$2e$76$2f$node_modules$2f$ai$2f$dist$2f$index$2e$mjs__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__$3c$locals$3e$__["generateText"])({
                 model: openai("gpt-4o"),
                 system: systemPrompt,
                 prompt: userPrompt
             });
-            return text;
+            text = result.text;
         } else {
             // Fallback to AI Gateway (no API key needed)
-            const { text } = await (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$ai$40$5$2e$0$2e$102_zod$40$3$2e$25$2e$76$2f$node_modules$2f$ai$2f$dist$2f$index$2e$mjs__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__$3c$locals$3e$__["generateText"])({
+            const result = await (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$pnpm$2f$ai$40$5$2e$0$2e$102_zod$40$3$2e$25$2e$76$2f$node_modules$2f$ai$2f$dist$2f$index$2e$mjs__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__$3c$locals$3e$__["generateText"])({
                 model: "openai/gpt-4o",
                 system: systemPrompt,
                 prompt: userPrompt
             });
-            return text;
+            text = result.text;
         }
+        console.log("=".repeat(80));
+        console.log("FINAL CLINICAL NOTE:");
+        console.log("=".repeat(80));
+        console.log(text);
+        console.log("=".repeat(80));
+        console.log(`Note length: ${text.length} characters`);
+        console.log("=".repeat(80));
+        return text;
     } catch (error) {
-        console.error("AI generation error:", error);
+        console.error("❌ AI generation error:", error);
         throw new Error(`Failed to generate note: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
 }

@@ -92,6 +92,14 @@ export default function HomePage() {
   const processEncounter = async (encounterId: string, audioBlob: Blob) => {
     const enc = encounters.find((e) => e.id === encounterId)
 
+    console.log("\n" + "=".repeat(80))
+    console.log("PROCESSING ENCOUNTER")
+    console.log("=".repeat(80))
+    console.log(`Encounter ID: ${encounterId}`)
+    console.log(`Patient: ${enc?.patient_name || "Unknown"}`)
+    console.log(`Visit Reason: ${enc?.visit_reason || "Not provided"}`)
+    console.log("=".repeat(80) + "\n")
+
     // Transcription
     setTranscriptionStatus("in-progress")
     let transcript: string
@@ -99,8 +107,9 @@ export default function HomePage() {
       transcript = await transcribeAudio(audioBlob, apiKey)
       await updateEncounter(encounterId, { transcript_text: transcript })
       setTranscriptionStatus("done")
+      console.log("✅ Transcription saved to encounter")
     } catch (err) {
-      console.error("Transcription failed:", err)
+      console.error("❌ Transcription failed:", err)
       setTranscriptionStatus("failed")
       await updateEncounter(encounterId, { status: "transcription_failed" })
       return
@@ -109,6 +118,7 @@ export default function HomePage() {
     // Note generation
     setNoteGenerationStatus("in-progress")
     try {
+      console.log("\n📋 Starting note generation from transcript...\n")
       const note = await generateClinicalNote({
         transcript,
         patient_name: enc?.patient_name || "",
@@ -120,13 +130,17 @@ export default function HomePage() {
         status: "completed",
       })
       setNoteGenerationStatus("done")
+      console.log("✅ Clinical note saved to encounter")
+      console.log("\n" + "=".repeat(80))
+      console.log("ENCOUNTER PROCESSING COMPLETE")
+      console.log("=".repeat(80) + "\n")
 
       // Switch to viewing mode after short delay
       setTimeout(() => {
         setView({ type: "viewing", encounterId })
       }, 1000)
     } catch (err) {
-      console.error("Note generation failed:", err)
+      console.error("❌ Note generation failed:", err)
       setNoteGenerationStatus("failed")
       await updateEncounter(encounterId, { status: "note_generation_failed" })
     }

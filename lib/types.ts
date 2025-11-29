@@ -54,7 +54,12 @@ export function parseNoteText(noteText: string): ClinicalNote {
   for (const [key, pattern] of Object.entries(patterns)) {
     const match = noteText.match(pattern)
     if (match && match[1]) {
-      sections[key as keyof ClinicalNote] = match[1].trim()
+      const content = match[1].trim()
+      // Only set the content if it's not empty after trimming whitespace
+      // This ensures that empty sections or whitespace-only sections remain empty
+      if (content) {
+        sections[key as keyof ClinicalNote] = content
+      }
     }
   }
 
@@ -63,20 +68,20 @@ export function parseNoteText(noteText: string): ClinicalNote {
 
 export function formatNoteText(note: ClinicalNote): string {
   return `Chief Complaint:
-${note.chief_complaint || "Not documented"}
+${note.chief_complaint || ""}
 
 HPI:
-${note.hpi || "Not documented"}
+${note.hpi || ""}
 
 ROS:
-${note.ros || "Not discussed"}
+${note.ros || ""}
 
 Physical Exam:
-${note.physical_exam || "Not performed"}
+${note.physical_exam || ""}
 
 Assessment:
-${note.assessment || "Not documented"}
+${note.assessment || ""}
 
 Plan:
-${note.plan || "Not documented"}`
+${note.plan || ""}`
 }

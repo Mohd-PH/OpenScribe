@@ -136,9 +136,15 @@ export function NoteEditor({ encounter, onSave }: NoteEditorProps) {
         </div>
       </div>
 
-      <Tabs defaultValue="chief_complaint" className="flex flex-1 flex-col overflow-hidden">
+      <Tabs defaultValue="complete" className="flex flex-1 flex-col overflow-hidden">
         <div className="shrink-0 border-b border-border bg-background px-8">
           <TabsList className="h-12 bg-transparent p-0 gap-1">
+            <TabsTrigger
+              value="complete"
+              className="rounded-none border-b-2 border-transparent px-4 text-sm text-muted-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground"
+            >
+              Complete Note
+            </TabsTrigger>
             {SECTIONS.map(({ key, label }) => (
               <TabsTrigger
                 key={key}
@@ -153,6 +159,13 @@ export function NoteEditor({ encounter, onSave }: NoteEditorProps) {
 
         <ScrollArea className="flex-1">
           <div className="p-8">
+            <TabsContent value="complete" className="m-0">
+              <Textarea
+                value={formatNoteText(note)}
+                readOnly
+                className="min-h-[300px] resize-none rounded-xl border-border bg-secondary font-mono text-sm leading-relaxed"
+              />
+            </TabsContent>
             {SECTIONS.map(({ key, label }) => (
               <TabsContent key={key} value={key} className="m-0">
                 <Textarea
