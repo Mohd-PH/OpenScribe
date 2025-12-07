@@ -183,6 +183,21 @@ This directory should be safe to delete at any time and is git-ignored.
 
 ---
 
+## Naming & Linting Rules
+
+These conventions are enforced by ESLint (`pnpm lint`) and the structure check (`pnpm lint:structure`):
+
+- **Folders** – always kebab-case (`audio-ingest`, `note-core`). Pipeline stages must use the numbered order shown earlier (`audio-ingest`, `transcribe`, `assemble`, `note-core`, `render`, `eval`).
+- **Source files** – kebab-case as well (`note-editor.tsx`, `secure-storage.ts`). Generated files belong in `build/`.
+- **React components/classes/exported functions** – PascalCase (`NoteEditor`, `BadgeVariants`, `ButtonVariants`).
+- **Config files** – live under `config/` and end in `.config.mjs` when the tool allows it. App-level stubs simply re-export from `config/`.
+- **Top-level allowlist** – only `apps/`, `packages/`, `config/`, `build/`, `node_modules/`, and the root metadata files (`package.json`, `pnpm-lock.yaml`, `tsconfig.json`, `README.md`, `.env*`). Everything else should move into an app/package.
+- **ESLint ignores** – `build/**` and `apps/web/public/**` are ignored, so never put source there. If you need to add a new generated directory, point it into `build/`.
+
+Breaking these rules causes CI/local `pnpm lint` to fail, so prefer renaming/moving files before adding exceptions.
+
+---
+
 ## Adding New Functionality
 
 1. Decide whether it is **app-specific** or **shared**.

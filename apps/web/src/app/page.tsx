@@ -21,7 +21,7 @@ const SEGMENT_DURATION_MS = 10000
 const OVERLAP_MS = 250
 
 export default function HomePage() {
-  const { encounters, addEncounter, updateEncounter, refresh } = useEncounters()
+  const { encounters, addEncounter, updateEncounter, deleteEncounter: removeEncounter, refresh } = useEncounters()
 
   const [view, setView] = useState<ViewState>({ type: "idle" })
   const [transcriptionStatus, setTranscriptionStatus] = useState<StepStatus>("pending")
@@ -402,6 +402,22 @@ export default function HomePage() {
     await updateEncounter(selectedEncounter.id, { note_text: noteText })
   }
 
+  const handleDeleteEncounter = async (encounterId: string) => {
+    await removeEncounter(encounterId)
+    if (currentEncounterIdRef.current === encounterId) {
+      currentEncounterIdRef.current = null
+    }
+    setView((prev) => {
+      if (
+        (prev.type === "recording" || prev.type === "processing" || prev.type === "viewing") &&
+        prev.encounterId === encounterId
+      ) {
+        return { type: "idle" }
+      }
+      return prev
+    })
+  }
+
   const renderMainContent = () => {
     switch (view.type) {
       case "idle":
@@ -451,12 +467,13 @@ export default function HomePage() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background">
-      <div className="w-72 shrink-0 border-r border-sidebar-border bg-sidebar">
+      <div className="flex h-full w-72 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar">
         <EncounterList
           encounters={encounters}
           selectedId={view.type === "viewing" ? view.encounterId : null}
           onSelect={handleSelectEncounter}
           onNewEncounter={handleStartNew}
+          onDeleteEncounter={handleDeleteEncounter}
           disabled={view.type === "recording"}
         />
       </div>

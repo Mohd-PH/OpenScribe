@@ -5,7 +5,7 @@ import { cn } from "@ui/lib/utils"
 import { Input } from "@ui/lib/ui/input"
 import { Button } from "@ui/lib/ui/button"
 import { ScrollArea } from "@ui/lib/ui/scroll-area"
-import { Search, FileText, Clock, Plus } from "lucide-react"
+import { Search, FileText, Clock, Plus, Trash2 } from "lucide-react"
 import { useState, useMemo } from "react"
 import { formatDistanceToNow } from "date-fns"
 interface EncounterListProps {
@@ -13,10 +13,18 @@ interface EncounterListProps {
   selectedId: string | null
   onSelect: (encounter: Encounter) => void
   onNewEncounter: () => void
+  onDeleteEncounter?: (id: string) => void | Promise<void>
   disabled?: boolean
 }
 
-export function EncounterList({ encounters, selectedId, onSelect, onNewEncounter, disabled }: EncounterListProps) {
+export function EncounterList({
+  encounters,
+  selectedId,
+  onSelect,
+  onNewEncounter,
+  onDeleteEncounter,
+  disabled,
+}: EncounterListProps) {
   const [search, setSearch] = useState("")
 
   const filtered = useMemo(() => {
@@ -31,7 +39,7 @@ export function EncounterList({ encounters, selectedId, onSelect, onNewEncounter
   }, [encounters, search])
 
   return (
-    <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+    <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="border-b border-sidebar-border p-4">
         <Button
           onClick={onNewEncounter}
@@ -57,7 +65,7 @@ export function EncounterList({ encounters, selectedId, onSelect, onNewEncounter
         </div>
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-8 text-center">
             <FileText className="mb-3 h-8 w-8 text-muted-foreground/50" />
@@ -89,7 +97,26 @@ export function EncounterList({ encounters, selectedId, onSelect, onNewEncounter
                       {encounter.visit_reason || "No reason specified"}
                     </p>
                   </div>
-                  <StatusIndicator status={encounter.status} />
+                  {onDeleteEncounter ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void onDeleteEncounter(encounter.id)
+                      }}
+                      disabled={disabled}
+                      aria-label="Delete encounter"
+                      title="Delete encounter"
+                      className={cn(
+                        "rounded-md p-1 text-muted-foreground/70 transition-colors",
+                        "hover:bg-sidebar-accent hover:text-foreground",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "disabled:pointer-events-none disabled:opacity-50",
+                      )}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  ) : null}
                 </div>
                 <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Clock className="h-3 w-3" />
@@ -107,19 +134,4 @@ export function EncounterList({ encounters, selectedId, onSelect, onNewEncounter
 
     </div>
   )
-}
-
-function StatusIndicator({ status }: { status: Encounter["status"] }) {
-  const config = {
-    idle: { color: "bg-muted-foreground/30" },
-    recording: { color: "bg-foreground animate-pulse" },
-    processing: { color: "bg-muted-foreground animate-pulse" },
-    transcription_failed: { color: "bg-destructive" },
-    note_generation_failed: { color: "bg-destructive" },
-    completed: { color: "bg-foreground" },
-  }
-
-  const { color } = config[status]
-
-  return <div className={cn("h-2 w-2 shrink-0 rounded-full", color)} />
 }
