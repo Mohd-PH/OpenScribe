@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-OpenScribe is a privacy-conscious, local-first AI Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The tool stores all data locally by default and requires explicit clinician review and approval before any note can be used. **All AI-generated output is draft-only and must be reviewed by a licensed clinician who accepts full responsibility for accuracy and completeness.**
+OpenScribe is a privacy-conscious, local-first AI Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The tool stores all data locally by default and requires explicit clinician review and approval before any note can be used. 
 
 ## Purpose and Philosophy
 
