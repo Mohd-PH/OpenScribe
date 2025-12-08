@@ -1,8 +1,16 @@
 # OpenScribe
 
+## Demo
+
+<div>
+  <a href="https://www.loom.com/share/bf6170785b7f492db56a56636c70620a">
+    <img style="max-width:300px;" src="https://cdn.loom.com/sessions/thumbnails/bf6170785b7f492db56a56636c70620a-with-play.gif">
+  </a>
+</div>
+
 ## Project Overview
 
-OpenScribe is a privacy-conscious, local-first AI Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The tool stores all data locally by default and requires explicit clinician review and approval before any note can be used. 
+OpenScribe is a local-first AI Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The tool stores all data locally by default. 
 
 ## Purpose and Philosophy
 
@@ -24,8 +32,8 @@ OpenScribe exists to provide a simple, modular, privacy-conscious alternative to
 ## Features
 
 - ✅ Record patient encounters with pause/resume
-- ✅ Audio transcription (Whisper API integration planned)
-- ✅ AI-generated structured notes (GPT-4o)
+- ✅ Audio transcription
+- ✅ AI-generated structured notes (Currently support anthropic and OpenAI with plan for broader support)
 - ✅ Editable note sections (CC, HPI, ROS, PE, Assessment, Plan)
 - ✅ AES-GCM encrypted local storage
 - ✅ Export to clipboard or text files
@@ -35,7 +43,6 @@ OpenScribe exists to provide a simple, modular, privacy-conscious alternative to
 ### Prerequisites
 - Node.js 18+
 - pnpm (`npm install -g pnpm`)
-- OpenAI API key (for note generation)
 
 ### Installation
 
@@ -54,6 +61,7 @@ Create `apps/web/.env.local`:
 
 ```
 OPENAI_API_KEY=your-key-here
+ANTHROPIC_API_KEY=your-key-here
 NEXT_PUBLIC_SECURE_STORAGE_KEY=<base64-encoded-32-bytes>
 ```
 
@@ -65,15 +73,11 @@ Generate the storage key: `openssl rand -base64 32`
 - ✅ Core recording, transcription, and note generation
 - ✅ AES-GCM encrypted local storage
 - ✅ Browser-based audio capture
-- 🔄 Simulated transcription (Whisper API integration in progress)
 
 ### Near-term (v0.1-0.5)
-- Real Whisper API integration
 - Error handling improvements
-- Audio playback for review
 - Comprehensive test coverage
 - Basic audit logging
-
 
 **Physical Controls**:
 - User responsibility (device security, physical access)
@@ -85,8 +89,9 @@ See the [Trello board](https://trello.com/b/9ytGVZU4/openscribe) for detailed pr
 - Custom note templates
 - Optional cloud sync (user-controlled)
 - Multi-language support
-- mobile app
+- Mobile app
 - EHR integration
+- RCM integration
 
 ## Architecture
 
@@ -174,23 +179,18 @@ Output: `dist/OpenScribe.app`, `dist/OpenScribe-0.1.0-arm64.dmg`
 **Transmission**: Audio → Whisper API, Transcripts → OpenAI API (note generation only)  
 **No Tracking**: Zero analytics, telemetry, or cloud sync
 
-⚠️ **HIPAA Status**: OpenScribe is **NOT currently HIPAA compliant**. See [Roadmap](#roadmap) for compliance path.
 
-⚠️ **Clinician Responsibility**  
+**Use Responsibility**  
 - All AI notes are drafts requiring review
-- You accept full responsibility for accuracy and completeness
-- Do not use with PHI until HIPAA compliance is achieved
 - Ensure regulatory compliance for your use case
 
 ## Limitations & Disclaimers
 
 **Not a Medical Device**: Documentation tool only, not for diagnosis or treatment  
-**Not HIPAA Certified**: Users ensure their own compliance  
+**HIPAA Compliance**: Self hosted users ensure their own compliance  
 **No EHR Integration**: Standalone tool  
 **Browser Storage Limits**: ~5-10MB typical  
 **No Warranty**: Provided as-is under MIT License
-
-This tool does not provide medical advice. Users are solely responsible for regulatory compliance and clinical accuracy.
 
 ## Contributing
 
@@ -203,13 +203,33 @@ Contributions welcome! Check the [Trello board](https://trello.com/b/9ytGVZU4/op
 4. Follow existing code style
 5. Submit a PR
 
-**Priority Areas**: Whisper integration, error handling, testing, accessibility, documentation
+**Priority Areas**: Error handling, testing, accessibility, documentation
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+```
+MIT License
 
-Free for commercial use, modification, distribution, and private use. No warranty provided.
+Copyright (c) 2025 OpenScribe
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Citation
 
@@ -218,7 +238,3 @@ OpenScribe: A Privacy-Conscious Clinical Documentation Assistant
 GitHub: https://github.com/sammargolis/OpenScribe
 Maintainer: Sam Margolis (@sammargolis)
 ```
-
----
-
-**⚠️ Important**: AI-generated notes require review by a licensed clinician who accepts full responsibility for accuracy and completeness.
