@@ -2,11 +2,7 @@
 
 ## Demo
 
-<div>
-  <a href="https://www.loom.com/share/bf6170785b7f492db56a56636c70620a">
-    <img style="max-width:300px;" src="https://cdn.loom.com/sessions/thumbnails/bf6170785b7f492db56a56636c70620a-with-play.gif">
-  </a>
-</div>
+[![OpenScribe Demo](https://cdn.loom.com/sessions/thumbnails/bf6170785b7f492db56a56636c70620a-1733696000000.jpg)](https://www.loom.com/share/bf6170785b7f492db56a56636c70620a)
 
 ## Project Overview
 
