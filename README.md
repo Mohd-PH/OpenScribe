@@ -68,7 +68,9 @@ rm -rf node_modules pnpm-lock.yaml && pnpm install
 
 ## Demo
 
-[![Watch Demo](.github/demo.png)]()
+[Demo](https://www.loom.com/share/659d4f09fc814243addf8be64baf10aa)
+
+[![Watch Demo](.github/demo.png)](https://www.loom.com/share/659d4f09fc814243addf8be64baf10aa)
 
 
 ## Purpose and Philosophy
