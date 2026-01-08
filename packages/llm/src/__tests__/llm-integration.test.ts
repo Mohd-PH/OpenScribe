@@ -97,7 +97,7 @@ test("runLLMRequest with jsonSchema returns valid JSON", async () => {
   })
 
   // Response should be valid JSON
-  let parsed: { name: unknown; age: unknown }
+  let parsed: { name: unknown; age: unknown } = { name: "", age: 0 }
   assert.doesNotThrow(() => {
     parsed = JSON.parse(response)
   }, "Response should be valid JSON")
@@ -105,7 +105,7 @@ test("runLLMRequest with jsonSchema returns valid JSON", async () => {
   // Should match schema
   assert.equal(typeof parsed.name, "string", "name should be a string")
   assert.equal(typeof parsed.age, "number", "age should be a number")
-  assert.ok(parsed.name.length > 0, "name should not be empty")
+  assert.ok(typeof parsed.name === "string" && parsed.name.length > 0, "name should not be empty")
 })
 
 test("runLLMRequest with jsonSchema enforces schema structure", async () => {

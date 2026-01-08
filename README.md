@@ -6,7 +6,55 @@
 
 ## Project Overview
 
-OpenScribe is a local-first AI Medical Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The tool stores all data locally by default.
+OpenScribe is a local first MIT license open source AI Medical Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The tool stores all data locally by default.
+
+## Quick Start (5 minutes)
+
+### 1. Install Prerequisites
+
+```bash
+node --version  # Check you have Node.js 18+
+npm install -g pnpm
+```
+
+### 2. Clone and Install
+
+```bash
+git clone https://github.com/sammargolis/OpenScribe.git
+cd OpenScribe
+pnpm install
+```
+
+### 3. Configure Environment
+
+```bash
+pnpm setup  # Auto-generates .env.local with secure storage key
+```
+
+Edit `apps/web/.env.local` and add your API keys:
+
+```bash
+OPENAI_API_KEY=sk-proj-YOUR_KEY_HERE
+ANTHROPIC_API_KEY=sk-ant-YOUR_KEY_HERE
+# NEXT_PUBLIC_SECURE_STORAGE_KEY is auto-generated, don't modify
+```
+
+### 4. Start the App
+
+```bash
+pnpm dev          # Web app → http://localhost:3001
+pnpm dev:desktop  # OR desktop app (Electron)
+```
+
+### FYI Getting API Keys
+
+**OpenAI** (transcription): [platform.openai.com/api-keys](https://platform.openai.com/api-keys) - Sign up → API Keys → Create new secret key
+
+**Anthropic** (note generation): [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) - Sign up → API Keys → Create Key
+
+Both services offer $5 free credits for new accounts
+
+---
 
 ## Purpose and Philosophy
 
@@ -27,7 +75,6 @@ OpenScribe exists to provide a simple, modular, privacy-conscious alternative to
 
 ## Features
 
-- ✅ Record patient encounters with pause/resume
 - ✅ Audio transcription
 - ✅ AI-generated structured notes (Currently support anthropic and OpenAI with plan for broader support)
 - ✅ Editable note sections (CC, HPI, ROS, PE, Assessment, Plan)
@@ -145,44 +192,18 @@ See [architecture.md](./architecture.md) for complete details.
 - `config/` – Shared configuration files
 - `build/` – Build artifacts
 
-## macOS Desktop App
-
-Run the Electron wrapper in development:
-
-```bash
-pnpm dev:desktop
-```
-
-Build a production `.app` and `.dmg`:
-
-```bash
-pnpm build:desktop
-```
-
-Output: `dist/OpenScribe.app`, `dist/OpenScribe-0.1.0-arm64.dmg`
-
-## Usage
-
-1. **Create Encounter**: Click microphone button, enter patient info, start recording
-2. **Record Audio**: Pause/resume as needed, monitor duration
-3. **End Recording**: Processing generates transcript and note
-4. **Edit Note**: Review AI draft, edit sections (CC, HPI, ROS, PE, Assessment, Plan)
-5. **Export**: Copy to clipboard or download as `.txt`
-
 ## Privacy & Data Handling
 
 **Storage**: AES-GCM encrypted localStorage. Audio processed in-memory, not persisted.  
 **Transmission**: Audio → Whisper API (transcription), transcripts → Anthropic Claude (note generation only)  
 **No Tracking**: Zero analytics, telemetry, or cloud sync
 
-
 **Use Responsibility**  
 - All AI notes are drafts requiring review
 - Ensure regulatory compliance for your use case
 
 ## Limitations & Disclaimers
-
-**Not a Medical Device**: Documentation tool only, not for diagnosis or treatment  
+ 
 **HIPAA Compliance**: Self hosted users ensure their own compliance  
 **No EHR Integration**: Standalone tool  
 **Browser Storage Limits**: ~5-10MB typical  
