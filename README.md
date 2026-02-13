@@ -37,7 +37,7 @@ cd OpenScribe
 pnpm install
 ```
 
-### 3. Configure Environment
+### 3. Configure Environment (Hosted or Local)
 
 ```bash
 pnpm setup  # Auto-generates .env.local with secure storage key
