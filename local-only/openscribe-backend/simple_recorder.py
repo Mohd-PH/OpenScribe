@@ -19,8 +19,10 @@ import click
 import asyncio
 import logging
 import json
+import os
 import sys
 import time
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -82,6 +84,29 @@ class SimpleRecorder:
         
         # Global AudioRecorder instance to maintain state across CLI calls
         self.persistent_recorder = None
+
+    def prewarm_pipeline(self, note_type: str = "history_physical"):
+        """
+        Best-effort prewarm during active recording to reduce stop->result latency.
+        Runs in background and must never fail the recording flow.
+        """
+        try:
+            print("🔥 Prewarming transcription model...")
+            if self.transcriber is None and WhisperTranscriber:
+                t0 = time.perf_counter()
+                self.transcriber = WhisperTranscriber()
+                print(f"✅ Transcription model warmed in {time.perf_counter() - t0:.2f}s")
+        except Exception as e:
+            print(f"⚠️ Transcription prewarm skipped: {e}")
+
+        try:
+            print("🔥 Prewarming note generation engine...")
+            if self.summarizer is None and OllamaSummarizer:
+                t0 = time.perf_counter()
+                self.summarizer = OllamaSummarizer()
+                print(f"✅ Note engine warmed in {time.perf_counter() - t0:.2f}s")
+        except Exception as e:
+            print(f"⚠️ Note engine prewarm skipped: {e}")
         
     def get_state(self) -> dict:
         """Get current recorder state."""
@@ -180,7 +205,7 @@ class SimpleRecorder:
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_file}")
         
-        print(f"📝 Transcribing: {audio_path.name}")
+        print(f"📝 Transcribing: {audio_path.name}", flush=True)
         
         # Initialize transcriber only when needed
         if self.transcriber is None:
@@ -228,19 +253,23 @@ Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         note_type: str = "history_physical",
     ) -> dict:
         """Summarize transcript text."""
-        print("🧠 Generating summary...")
+        print("🧠 Generating summary...", flush=True)
         
         # Initialize summarizer only when needed
         if self.summarizer is None:
             self.summarizer = OllamaSummarizer()
         
-        # Generate summary (using correct method name and parameters)
-        summary_result = self.summarizer.summarize_transcript(transcript_text, duration_minutes)
+        include_summary = os.getenv("OPENSCRIBE_ENABLE_MEETING_SUMMARY", "0").lower() in {"1", "true", "yes", "on"}
+        summary_result = None
+        if include_summary:
+            summary_result = self.summarizer.summarize_transcript(transcript_text, duration_minutes)
+        else:
+            logger.info("Skipping meeting-summary generation (OPENSCRIBE_ENABLE_MEETING_SUMMARY is disabled)")
         clinical_note = self.summarizer.generate_clinical_note(transcript_text, note_type)
         
         if summary_result is None:
             return {
-                "summary": "Failed to generate summary",
+                "summary": "",
                 "participants": [],
                 "discussion_areas": [],
                 "key_points": [],
@@ -276,7 +305,8 @@ Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     
     async def process_recording(self, audio_file: str, session_name: str = "Recording", note_type: str = "history_physical") -> dict:
         """Complete processing: transcribe + summarize."""
-        print(f"🔄 Processing recording: {audio_file}")
+        print(f"🔄 Processing recording: {audio_file}", flush=True)
+        pipeline_t0 = time.perf_counter()
         
         # If no audio file provided, use the last recording
         if not audio_file:
@@ -303,7 +333,7 @@ Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                 else:
                     duration_minutes = int(duration_seconds / 60)
                     duration_display = f"{duration_minutes}m"
-                print(f"📏 Audio duration: {duration_seconds:.1f} seconds ({duration_display})")
+                print(f"📏 Audio duration: {duration_seconds:.1f} seconds ({duration_display})", flush=True)
         except Exception as e:
             print(f"⚠️ Could not determine audio duration: {e}")
             # Try to get duration from state file timestamps
@@ -317,20 +347,26 @@ Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                     stop_dt = parse(stop_time)
                     duration_seconds = (stop_dt - start_dt).total_seconds()
                     duration_minutes = max(1, int(duration_seconds / 60))
-                    print(f"📏 Duration from timestamps: {duration_seconds:.1f} seconds ({duration_minutes} minutes)")
+                    print(f"📏 Duration from timestamps: {duration_seconds:.1f} seconds ({duration_minutes} minutes)", flush=True)
             except Exception:
                 pass
         
         # Step 1: Transcribe
+        transcribe_t0 = time.perf_counter()
         transcript_data = await self.transcribe_audio(audio_file, session_name)
+        transcribe_elapsed = time.perf_counter() - transcribe_t0
+        print(f"⏱️ Transcription stage completed in {transcribe_elapsed:.2f}s", flush=True)
         
         # Step 2: Summarize with actual duration
+        summarize_t0 = time.perf_counter()
         summary_data = await self.summarize_transcript(
             transcript_data["transcript_text"],
             session_name,
             duration_minutes,
             note_type,
         )
+        summarize_elapsed = time.perf_counter() - summarize_t0
+        print(f"⏱️ Note generation stage completed in {summarize_elapsed:.2f}s", flush=True)
         
         # Step 3: Save complete summary
         summary_path = self.output_dir / f"{audio_path.stem}_summary.json"
@@ -358,12 +394,12 @@ Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         with open(summary_path, 'w') as f:
             json.dump(complete_data, f, indent=2)
         
-        print(f"✅ Complete processing saved: {summary_path}")
+        print(f"✅ Complete processing saved: {summary_path}", flush=True)
         
         # Clean up WAV file after successful processing
         try:
             audio_path.unlink()
-            print(f"🗑️ Cleaned up audio file: {audio_path}")
+            print(f"🗑️ Cleaned up audio file: {audio_path}", flush=True)
         except Exception as e:
             print(f"⚠️ Could not delete audio file: {e}")
         
@@ -372,12 +408,13 @@ Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         if state_file.exists():
             try:
                 state_file.unlink()
-                print(f"🧹 Cleared recording state")
+                print(f"🧹 Cleared recording state", flush=True)
             except Exception as e:
                 print(f"⚠️ Could not clear state: {e}")
         
-        print(f"📋 Processing complete - meeting available in list")
-        
+        print(f"📋 Processing complete - meeting available in list", flush=True)
+        print(f"⏱️ Total processing pipeline time: {time.perf_counter() - pipeline_t0:.2f}s", flush=True)
+
         return complete_data
 
 
@@ -469,6 +506,12 @@ def start(session_name, note_type):
     try:
         recording_path = recorder.start_recording(session_name)
         recording_started = True
+        if os.getenv("OPENSCRIBE_PREWARM", "1").lower() in {"1", "true", "yes", "on"}:
+            threading.Thread(
+                target=recorder.prewarm_pipeline,
+                args=(note_type,),
+                daemon=True,
+            ).start()
         print(f"🎤 Recording '{session_name}' - Press Ctrl+C to stop and process")
         print(f"📁 File: {recording_path}")
         print("📢 Speak now...")
@@ -675,7 +718,7 @@ def record(duration, session_name, note_type):
                                 loop = asyncio.new_event_loop()
                                 asyncio.set_event_loop(loop)
                             
-                            print("📝 Starting transcription...")
+                            print("🔄 Starting processing pipeline...")
                             result = loop.run_until_complete(recorder.process_recording(final_path, session_name, note_type))
                             
                             print("✅ Complete processing finished!")
@@ -1376,11 +1419,50 @@ def check_model(model_name):
 
 
 @cli.command()
+def warmup():
+    """Warm note-generation engine (starts Ollama + preloads model)."""
+    if not OllamaSummarizer:
+        print(json.dumps({"success": False, "error": "summarizer_unavailable"}))
+        import sys
+        sys.exit(1)
+    try:
+        os.environ["OPENSCRIBE_OLLAMA_WARMUP"] = "1"
+        t0 = time.perf_counter()
+        _ = OllamaSummarizer()
+        elapsed = round(time.perf_counter() - t0, 2)
+        print(json.dumps({"success": True, "warmed": True, "elapsed_s": elapsed}))
+    except Exception as e:
+        print(json.dumps({"success": False, "error": str(e)}))
+        import sys
+        sys.exit(1)
+
+
+@cli.command()
+def ollama_status():
+    """Return Ollama health and most recent startup diagnostics."""
+    from src.ollama_manager import (
+        get_last_startup_report,
+        get_ollama_binary_candidates,
+        is_ollama_running,
+    )
+
+    payload = {
+        "running": is_ollama_running(),
+        "binary_candidates": [str(p) for p in get_ollama_binary_candidates()],
+        "startup_report": get_last_startup_report(),
+    }
+    print(json.dumps(payload, indent=2))
+
+
+@cli.command()
 @click.argument('model_name')
 def pull_model(model_name):
     """Download an Ollama model (uses HTTP API)."""
     from src.ollama_manager import start_ollama_server
-    start_ollama_server()
+    if not start_ollama_server():
+        print(json.dumps({"success": False, "error": "Ollama server failed to start"}))
+        import sys
+        sys.exit(1)
     try:
         import ollama
         for progress in ollama.pull(model_name, stream=True):
@@ -1395,6 +1477,8 @@ def pull_model(model_name):
         print(json.dumps({"success": True, "model": model_name}))
     except Exception as e:
         print(json.dumps({"success": False, "error": str(e)}))
+        import sys
+        sys.exit(1)
 
 
 if __name__ == '__main__':

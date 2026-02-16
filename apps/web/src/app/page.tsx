@@ -17,6 +17,14 @@ type ViewState =
   | { type: "viewing"; encounterId: string }
 
 type StepStatus = "pending" | "in-progress" | "done" | "failed"
+type ProcessingMetrics = {
+  processingStartedAt?: number
+  processingEndedAt?: number
+  transcriptionStartedAt?: number
+  transcriptionEndedAt?: number
+  noteGenerationStartedAt?: number
+  noteGenerationEndedAt?: number
+}
 
 const SEGMENT_DURATION_MS = 10000
 const OVERLAP_MS = 250
@@ -73,6 +81,7 @@ function HomePageContent() {
   const [view, setView] = useState<ViewState>({ type: "idle" })
   const [transcriptionStatus, setTranscriptionStatus] = useState<StepStatus>("pending")
   const [noteGenerationStatus, setNoteGenerationStatus] = useState<StepStatus>("pending")
+  const [processingMetrics, setProcessingMetrics] = useState<ProcessingMetrics>({})
   const [sessionId, setSessionId] = useState<string | null>(null)
 
   const currentEncounterIdRef = useRef<string | null>(null)
@@ -337,6 +346,11 @@ function HomePageContent() {
       debugLog("=".repeat(80) + "\n")
 
       setNoteGenerationStatus("in-progress")
+      setProcessingMetrics((prev) => ({
+        ...prev,
+        transcriptionEndedAt: prev.transcriptionEndedAt ?? Date.now(),
+        noteGenerationStartedAt: prev.noteGenerationStartedAt ?? Date.now(),
+      }))
       try {
         const note = await generateClinicalNote({
           transcript,
@@ -351,6 +365,11 @@ function HomePageContent() {
         })
         await refreshRef.current()
         setNoteGenerationStatus("done")
+        setProcessingMetrics((prev) => ({
+          ...prev,
+          noteGenerationEndedAt: Date.now(),
+          processingEndedAt: Date.now(),
+        }))
         debugLog("✅ Clinical note saved to encounter")
         debugLog("\n" + "=".repeat(80))
         debugLog("ENCOUNTER PROCESSING COMPLETE")
@@ -359,6 +378,11 @@ function HomePageContent() {
       } catch (err) {
         debugError("❌ Note generation failed:", err)
         setNoteGenerationStatus("failed")
+        setProcessingMetrics((prev) => ({
+          ...prev,
+          noteGenerationEndedAt: Date.now(),
+          processingEndedAt: Date.now(),
+        }))
         await updateEncounterRef.current(encounterId, { status: "note_generation_failed" })
         await refreshRef.current()
       }
@@ -374,6 +398,10 @@ function HomePageContent() {
         if (!transcript) return
         finalTranscriptRef.current = transcript
         setTranscriptionStatus("done")
+        setProcessingMetrics((prev) => ({
+          ...prev,
+          transcriptionEndedAt: prev.transcriptionEndedAt ?? Date.now(),
+        }))
         const encounterId = currentEncounterIdRef.current
         if (encounterId) {
           void (async () => {
@@ -394,6 +422,11 @@ function HomePageContent() {
     const readyState = eventSourceRef.current?.readyState
     debugError("Transcription stream error", { event, readyState, apiBaseUrl: apiBaseUrlRef.current })
     setTranscriptionStatus("failed")
+    setProcessingMetrics((prev) => ({
+      ...prev,
+      transcriptionEndedAt: prev.transcriptionEndedAt ?? Date.now(),
+      processingEndedAt: Date.now(),
+    }))
   }, [])
 
   useEffect(() => {
@@ -484,6 +517,7 @@ function HomePageContent() {
       finalRecordingRef.current = null
       setTranscriptionStatus("pending")
       setNoteGenerationStatus("pending")
+      setProcessingMetrics({})
 
       const session = crypto.randomUUID()
       if (!localBackendAvailable) {
@@ -498,6 +532,9 @@ function HomePageContent() {
       })
 
       currentEncounterIdRef.current = encounter.id
+      // Optimistically flip to recording immediately for responsive UI.
+      setView({ type: "recording", encounterId: encounter.id })
+      setTranscriptionStatus("in-progress")
       if (localBackendAvailable && localBackendRef.current) {
         const sessionName = `OpenScribe ${encounter.id}`
         localSessionNameRef.current = sessionName
@@ -508,11 +545,10 @@ function HomePageContent() {
       } else {
         await startRecording()
       }
-      setView({ type: "recording", encounterId: encounter.id })
-      setTranscriptionStatus("in-progress")
     } catch (err) {
       debugError("Failed to start recording:", err)
       setTranscriptionStatus("failed")
+      setView({ type: "idle" })
     }
   }
 
@@ -567,9 +603,16 @@ function HomePageContent() {
     })
 
     setView({ type: "processing", encounterId: encounter.id })
+    setProcessingMetrics({
+      processingStartedAt: Date.now(),
+      transcriptionStartedAt: Date.now(),
+    })
 
     if (localBackendAvailable && localBackendRef.current) {
-      setNoteGenerationStatus("in-progress")
+      // Local backend processes in sequence (transcription -> note generation).
+      // Keep note generation pending until backend emits stage updates.
+      setTranscriptionStatus("in-progress")
+      setNoteGenerationStatus("pending")
       await localBackendRef.current.invoke("stop-recording-ui")
       localLastTickRef.current = null
       setLocalPaused(false)
@@ -621,7 +664,11 @@ function HomePageContent() {
         return
       }
       setTranscriptionStatus("in-progress")
-      setNoteGenerationStatus("in-progress")
+      setNoteGenerationStatus("pending")
+      setProcessingMetrics({
+        processingStartedAt: Date.now(),
+        transcriptionStartedAt: Date.now(),
+      })
       try {
         await localBackendRef.current.invoke("reprocess-meeting", summaryFile)
         const result = await localBackendRef.current.invoke("list-meetings")
@@ -639,14 +686,31 @@ function HomePageContent() {
           })
           setTranscriptionStatus("done")
           setNoteGenerationStatus("done")
+          setProcessingMetrics((prev) => ({
+            ...prev,
+            transcriptionEndedAt: prev.transcriptionEndedAt ?? Date.now(),
+            noteGenerationStartedAt: prev.noteGenerationStartedAt ?? Date.now(),
+            noteGenerationEndedAt: Date.now(),
+            processingEndedAt: Date.now(),
+          }))
           setView({ type: "viewing", encounterId: currentEncounterIdRef.current })
         } else {
           setTranscriptionStatus("failed")
           setNoteGenerationStatus("failed")
+          setProcessingMetrics((prev) => ({
+            ...prev,
+            transcriptionEndedAt: prev.transcriptionEndedAt ?? Date.now(),
+            processingEndedAt: Date.now(),
+          }))
         }
       } catch (error) {
         setTranscriptionStatus("failed")
         setNoteGenerationStatus("failed")
+        setProcessingMetrics((prev) => ({
+          ...prev,
+          transcriptionEndedAt: prev.transcriptionEndedAt ?? Date.now(),
+          processingEndedAt: Date.now(),
+        }))
       }
       return
     }
@@ -669,6 +733,12 @@ function HomePageContent() {
     const transcript = finalTranscriptRef.current
     const encounterId = currentEncounter?.id
     if (!encounterId || !transcript) return
+    setProcessingMetrics((prev) => ({
+      ...prev,
+      noteGenerationStartedAt: Date.now(),
+      noteGenerationEndedAt: undefined,
+      processingEndedAt: undefined,
+    }))
     await processEncounterForNoteGeneration(encounterId, transcript)
   }
 
@@ -676,6 +746,59 @@ function HomePageContent() {
     if (!localBackendAvailable || !localBackendRef.current) return
 
     const backend = localBackendRef.current
+    const stageHandler = (_event: unknown, payload: unknown) => {
+      const data = payload as {
+        stage?: string
+        status?: StepStatus
+        startedAtMs?: number
+        endedAtMs?: number
+        durationMs?: number
+      }
+      const stageTs = data?.startedAtMs || Date.now()
+      if (data?.stage === "transcription" && data.status === "in-progress") {
+        setTranscriptionStatus("in-progress")
+        setNoteGenerationStatus("pending")
+        setProcessingMetrics((prev) => ({
+          ...prev,
+          processingStartedAt: prev.processingStartedAt ?? stageTs,
+          transcriptionStartedAt: prev.transcriptionStartedAt ?? stageTs,
+        }))
+        return
+      }
+      if (data?.stage === "transcription" && data.status === "done") {
+        const endedAt = data.endedAtMs || Date.now()
+        const duration = typeof data.durationMs === "number" ? data.durationMs : undefined
+        setTranscriptionStatus("done")
+        setProcessingMetrics((prev) => ({
+          ...prev,
+          processingStartedAt: prev.processingStartedAt ?? (duration ? endedAt - duration : endedAt),
+          transcriptionStartedAt: prev.transcriptionStartedAt ?? (duration ? endedAt - duration : endedAt),
+          transcriptionEndedAt: endedAt,
+        }))
+        return
+      }
+      if (data?.stage === "note_generation" && data.status === "in-progress") {
+        setTranscriptionStatus("done")
+        setNoteGenerationStatus("in-progress")
+        setProcessingMetrics((prev) => ({
+          ...prev,
+          transcriptionEndedAt: prev.transcriptionEndedAt ?? stageTs,
+          noteGenerationStartedAt: prev.noteGenerationStartedAt ?? stageTs,
+        }))
+        return
+      }
+      if (data?.stage === "note_generation" && data.status === "done") {
+        const endedAt = data.endedAtMs || Date.now()
+        const duration = typeof data.durationMs === "number" ? data.durationMs : undefined
+        setNoteGenerationStatus("done")
+        setProcessingMetrics((prev) => ({
+          ...prev,
+          noteGenerationStartedAt: prev.noteGenerationStartedAt ?? (duration ? endedAt - duration : endedAt),
+          noteGenerationEndedAt: endedAt,
+        }))
+      }
+    }
+
     const handler = async (_event: unknown, payload: unknown) => {
       const data = payload as BackendProcessingEvent
       const encounterId = currentEncounterIdRef.current
@@ -684,6 +807,11 @@ function HomePageContent() {
       if (!data.success) {
         setTranscriptionStatus("failed")
         setNoteGenerationStatus("failed")
+        setProcessingMetrics((prev) => ({
+          ...prev,
+          transcriptionEndedAt: prev.transcriptionEndedAt ?? Date.now(),
+          processingEndedAt: Date.now(),
+        }))
         await updateEncounterRef.current(encounterId, { status: "transcription_failed" })
         return
       }
@@ -706,11 +834,20 @@ function HomePageContent() {
 
       setTranscriptionStatus("done")
       setNoteGenerationStatus("done")
+      setProcessingMetrics((prev) => ({
+        ...prev,
+        transcriptionEndedAt: prev.transcriptionEndedAt ?? Date.now(),
+        noteGenerationStartedAt: prev.noteGenerationStartedAt ?? Date.now(),
+        noteGenerationEndedAt: Date.now(),
+        processingEndedAt: Date.now(),
+      }))
       setView({ type: "viewing", encounterId })
     }
 
+    backend.on("processing-stage", stageHandler)
     backend.on("processing-complete", handler)
     return () => {
+      backend.removeAllListeners("processing-stage")
       backend.removeAllListeners("processing-complete")
     }
   }, [buildNoteFromMeeting, duration, localBackendAvailable])
@@ -724,7 +861,8 @@ function HomePageContent() {
       }
       localLastTickRef.current = now
     }
-    const interval = window.setInterval(tick, 1000)
+    tick()
+    const interval = window.setInterval(tick, 250)
     return () => window.clearInterval(interval)
   }, [localBackendAvailable, localPaused, view.type])
 

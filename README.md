@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-OpenScribe is a free MIT license open source AI Medical Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The tool uses Whisper for audio transcription, Claude models for note generation, and persists app data locally by default.
+OpenScribe is a free MIT license open source AI Medical Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The primary deployment path is local-only (on-device transcription + note generation). A cloud/OpenAI-hosted path is available as backup.
 
 - [Demo](https://www.loom.com/share/1ccd4eec00eb4ddab700d32734f33c28)
 - [Architecture](./architecture.md)
@@ -37,7 +37,17 @@ cd OpenScribe
 pnpm install
 ```
 
-### 3. Configure Environment (Hosted or Local)
+### 3. Choose Runtime Mode (Local-Only Primary, Cloud Backup)
+
+#### Primary: Local-Only (recommended)
+
+Use the local backend and models as the default path:
+
+`/Users/sammargolis/OpenScribe/local-only/README.md`
+
+#### Backup: Cloud/OpenAI + Claude
+
+If you want hosted inference as a fallback, configure API keys:
 
 ```bash
 pnpm setup  # Auto-generates .env.local with secure storage key
@@ -51,8 +61,6 @@ ANTHROPIC_API_KEY=sk-ant-YOUR_KEY_HERE
 # NEXT_PUBLIC_SECURE_STORAGE_KEY is auto-generated, don't modify
 ```
 
-OR RUN IT TRULY LOCAL ONLY with the local MedASR and MedGemma models seee /OpenScribe/local-only/README.md` for the fully local setup.
-
 ### 4. Start the App
 
 ```bash
@@ -62,21 +70,23 @@ pnpm dev:desktop  # OR desktop app (Electron)
 
 ---
 
-## Hosted vs Local-Only Modes
+## Runtime Modes
 
-OpenScribe supports **hosted** (default) and **local-only** workflows.
+OpenScribe supports two workflows, with **local-only as the primary path**.
 
-### Hosted (default)
+### Local-only (primary)
+- Transcription: local Whisper backend in `local-only/openscribe-backend`
+  - `whisper.cpp` (pywhispercpp), model default `base`
+  - optional `openai-whisper` backend (env override / availability dependent)
+- Notes: local Ollama models (default config `llama3.2:1b`; setup commonly installs `llama3.2:3b`; `gemma3:4b` is supported)
+- No cloud inference in this path
+
+See `/Users/sammargolis/OpenScribe/local-only/README.md` for setup.
+
+### Cloud/OpenAI + Claude (backup)
 - Transcription: OpenAI Whisper API
 - Notes: Anthropic Claude (or other hosted LLM)
 - Requires API keys in `apps/web/.env.local`
-
-### Local-only (optional)
-- Transcription: local MedASR
-- Notes: local MedGemma via llama.cpp
-- No cloud inference
-
-See `/Users/sammargolis/OpenScribe/local-only/README.md` for the fully local setup.
 
 ### FYI Getting API Keys
 
@@ -189,8 +199,9 @@ See [architecture.md](./architecture.md) for complete details.
 **Key Components:**
 - **UI Layer**: React components in `apps/web/` using Next.js App Router
 - **Audio Ingest**: Browser MediaRecorder API → WebM/MP4 blob
-- **Transcription**: OpenAI Whisper API
-- **LLM**: Provider-agnostic client (defaults to Anthropic Claude via `packages/llm`)
+- **Transcription (local path)**: Whisper (`whisper.cpp` or `openai-whisper`, depending on backend availability/config)
+- **LLM (local path)**: Ollama local models (`llama3.2:*`, `gemma3:4b`)
+- **Cloud backup path**: OpenAI Whisper API + hosted provider via `packages/llm`
 - **Note Core**: Structured clinical note generation and validation
 - **Storage**: AES-GCM encrypted browser localStorage
 

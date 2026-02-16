@@ -16,15 +16,23 @@ logger = logging.getLogger(__name__)
 class Config:
     """Manages application configuration with file persistence."""
 
-    DEFAULT_MODEL = "llama3.2:3b"
+    DEFAULT_MODEL = "llama3.2:1b"
 
     # Supported models with metadata (fast + broadly compatible)
     SUPPORTED_MODELS = {
+        "llama3.2:1b": {
+            "name": "Llama 3.2 1B",
+            "size": "1.3GB",
+            "params": "1B",
+            "description": "Fastest local option for most devices (default)",
+            "speed": "fastest",
+            "quality": "good"
+        },
         "llama3.2:3b": {
             "name": "Llama 3.2 3B",
             "size": "2GB",
             "params": "3B",
-            "description": "Fastest option for quick meetings (default)",
+            "description": "Better quality with modest speed tradeoff",
             "speed": "very fast",
             "quality": "good"
         },

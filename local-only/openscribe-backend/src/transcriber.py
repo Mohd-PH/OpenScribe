@@ -10,15 +10,23 @@ whisper.cpp is preferred as it's 10x smaller and 2-4x faster.
 
 import logging
 import os
+import platform
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Stability-first: disable Metal GPU path at process start.
-os.environ.setdefault("GGML_METAL", "0")
-os.environ.setdefault("WHISPER_CPP_USE_GPU", "0")
+IS_APPLE_SILICON = platform.system() == "Darwin" and platform.machine() == "arm64"
+
+# Set GPU/Metal preference before importing pywhispercpp so native init picks it up.
+_gpu_env = os.getenv("OPENSCRIBE_WHISPER_GPU")
+if _gpu_env is None:
+    _gpu_enabled = False
+else:
+    _gpu_enabled = _gpu_env.strip().lower() in {"1", "true", "yes", "on"}
+os.environ.setdefault("GGML_METAL", "1" if _gpu_enabled else "0")
+os.environ.setdefault("WHISPER_CPP_USE_GPU", "1" if _gpu_enabled else "0")
 
 # Try whisper.cpp first (preferred - smaller, faster)
 try:
@@ -48,7 +56,7 @@ class WhisperTranscriber:
     falls back to openai-whisper (PyTorch) if not.
     """
 
-    def __init__(self, model_size: str = "small"):
+    def __init__(self, model_size: str = "base"):
         """
         Initialize the Whisper transcriber.
 
@@ -61,7 +69,8 @@ class WhisperTranscriber:
                 "or openai-whisper: pip install pywhispercpp"
             )
 
-        self.model_size = model_size
+        env_model_size = os.getenv("OPENSCRIBE_WHISPER_MODEL", "").strip()
+        self.model_size = env_model_size or model_size
         self.model = None
         self.backend = None
         self._ensure_ffmpeg_in_path()
@@ -132,10 +141,26 @@ class WhisperTranscriber:
     def _load_model(self) -> None:
         """Load the Whisper model using the best available backend."""
         try:
-            if WHISPER_CPP_AVAILABLE:
-                self._load_whisper_cpp()
-            elif OPENAI_WHISPER_AVAILABLE:
+            backend_pref = os.getenv("OPENSCRIBE_WHISPER_BACKEND", "").strip().lower()
+            if not backend_pref:
+                # Default to openai-whisper for reliability on mixed Metal workloads.
+                backend_pref = "openai"
+
+            if backend_pref in {"openai", "openai-whisper"} and OPENAI_WHISPER_AVAILABLE:
                 self._load_openai_whisper()
+                return
+
+            if backend_pref in {"cpp", "whisper.cpp", "pywhispercpp"} and WHISPER_CPP_AVAILABLE:
+                self._load_whisper_cpp()
+                return
+
+            # Fallback if preferred backend is unavailable.
+            if OPENAI_WHISPER_AVAILABLE:
+                logger.warning("Preferred backend '%s' unavailable; using openai-whisper", backend_pref)
+                self._load_openai_whisper()
+            elif WHISPER_CPP_AVAILABLE:
+                logger.warning("Preferred backend '%s' unavailable; using whisper.cpp", backend_pref)
+                self._load_whisper_cpp()
             else:
                 raise ImportError("No Whisper backend available")
         except Exception as e:
@@ -145,24 +170,53 @@ class WhisperTranscriber:
     def _load_whisper_cpp(self) -> None:
         """Load model using whisper.cpp (pywhispercpp)."""
         logger.info(f"Loading whisper.cpp model: {self.model_size}")
-
-        # Stability-first: disable Metal GPU path to avoid crashes on some systems.
-        # Reliability is more important than speed for clinical use.
-        os.environ["GGML_METAL"] = "0"
+        # Default to GPU acceleration on Apple Silicon for speed; allow override.
+        use_gpu = os.getenv("OPENSCRIBE_WHISPER_GPU")
+        if use_gpu is None:
+            # Default to CPU for reliability when Ollama uses GPU memory.
+            use_gpu = "0"
+        wants_gpu = use_gpu in {"1", "true", "yes", "on"}
 
         # Determine number of threads (use most cores, leave 2 for system)
         import multiprocessing
         n_threads = max(1, multiprocessing.cpu_count() - 2)
 
-        # pywhispercpp auto-downloads the model if not present
-        self.model = WhisperCppModel(self.model_size, n_threads=n_threads)
+        # pywhispercpp auto-downloads the model if not present.
+        # If GPU allocation fails (common when Ollama already owns VRAM),
+        # retry on CPU so transcription still succeeds.
+        os.environ["GGML_METAL"] = "1" if wants_gpu else "0"
+        os.environ["WHISPER_CPP_USE_GPU"] = os.environ["GGML_METAL"]
+        try:
+            self.model = WhisperCppModel(self.model_size, n_threads=n_threads)
+        except Exception as gpu_exc:
+            if wants_gpu:
+                logger.warning(
+                    "whisper.cpp GPU init failed (%s). Falling back to CPU mode.",
+                    gpu_exc,
+                )
+                os.environ["GGML_METAL"] = "0"
+                os.environ["WHISPER_CPP_USE_GPU"] = "0"
+                self.model = WhisperCppModel(self.model_size, n_threads=n_threads)
+            else:
+                raise
         self.backend = "whisper.cpp"
-        logger.info(f"whisper.cpp model loaded successfully (threads: {n_threads})")
+        logger.info(
+            "whisper.cpp model loaded successfully (threads: %s, gpu: %s)",
+            n_threads,
+            "enabled" if os.environ["GGML_METAL"] == "1" else "disabled",
+        )
 
     def _load_openai_whisper(self) -> None:
         """Load model using openai-whisper (PyTorch)."""
         logger.info(f"Loading openai-whisper model: {self.model_size}")
-        self.model = openai_whisper.load_model(self.model_size)
+        # Keep model cache inside app/project writable area (not ~/.cache).
+        model_cache_dir = Path(__file__).parent.parent / "models" / "openai-whisper"
+        model_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.model = openai_whisper.load_model(
+            self.model_size,
+            device="cpu",
+            download_root=str(model_cache_dir),
+        )
         self.backend = "openai-whisper"
         logger.info("openai-whisper model loaded successfully")
 
@@ -218,6 +272,21 @@ class WhisperTranscriber:
     def _convert_to_16khz(self, audio_filepath: Path) -> Path:
         """Convert audio to 16kHz mono WAV for whisper.cpp compatibility."""
         import tempfile
+        import wave
+
+        # Skip conversion when already 16kHz mono PCM WAV.
+        try:
+            with wave.open(str(audio_filepath), "rb") as wav_file:
+                if (
+                    wav_file.getframerate() == 16000
+                    and wav_file.getnchannels() == 1
+                    and wav_file.getsampwidth() == 2
+                ):
+                    logger.info("Audio already 16kHz mono PCM; skipping ffmpeg conversion")
+                    return audio_filepath
+        except Exception:
+            # Not a plain WAV header or unreadable: fall back to ffmpeg conversion.
+            pass
 
         # Create temp file for converted audio
         temp_dir = tempfile.gettempdir()

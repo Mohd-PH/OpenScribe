@@ -164,6 +164,10 @@ function runPythonScript(mainWindow, script, args = [], silent = false) {
 
     const process = spawn(backendPath, args, {
       cwd: getBackendCwd(),
+      env: {
+        ...globalThis.process.env,
+        PYTHONUNBUFFERED: '1',
+      },
     });
 
     let stdout = '';
@@ -583,6 +587,12 @@ function registerOpenScribeIpcHandlers(mainWindow) {
 
       currentRecordingProcess = spawn(getBackendPath(), ['record', '7200', actualSessionName, '--note-type', noteType], {
         cwd: getBackendCwd(),
+        env: {
+          ...process.env,
+          // Warm the local model during active recording so stop->note generation is faster.
+          OPENSCRIBE_OLLAMA_WARMUP: '1',
+          PYTHONUNBUFFERED: '1',
+        },
       });
 
       let hasStarted = false;
@@ -591,7 +601,52 @@ function registerOpenScribeIpcHandlers(mainWindow) {
         const output = data.toString();
 
         output.split('\n').forEach((line) => {
-          if (line.trim()) sendDebugLog(mainWindow, line.trim());
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          sendDebugLog(mainWindow, trimmed);
+
+          // Emit granular processing stages so UI can show transcription and note generation separately.
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            const transcriptionDone = trimmed.match(/^⏱️ Transcription stage completed in ([0-9.]+)s$/);
+            if (transcriptionDone) {
+              const durationMs = Math.round(parseFloat(transcriptionDone[1]) * 1000);
+              const endedAtMs = Date.now();
+              mainWindow.webContents.send('processing-stage', {
+                stage: 'transcription',
+                status: 'done',
+                endedAtMs,
+                durationMs,
+              });
+              return;
+            }
+
+            const noteDone = trimmed.match(/^⏱️ Note generation stage completed in ([0-9.]+)s$/);
+            if (noteDone) {
+              const durationMs = Math.round(parseFloat(noteDone[1]) * 1000);
+              const endedAtMs = Date.now();
+              mainWindow.webContents.send('processing-stage', {
+                stage: 'note_generation',
+                status: 'done',
+                endedAtMs,
+                durationMs,
+              });
+              return;
+            }
+
+            if (trimmed.startsWith('📝 Transcribing:')) {
+              mainWindow.webContents.send('processing-stage', {
+                stage: 'transcription',
+                status: 'in-progress',
+                startedAtMs: Date.now(),
+              });
+            } else if (trimmed.startsWith('🧠 Generating summary')) {
+              mainWindow.webContents.send('processing-stage', {
+                stage: 'note_generation',
+                status: 'in-progress',
+                startedAtMs: Date.now(),
+              });
+            }
+          }
         });
 
         if (output.includes('✅ Complete processing finished!')) {
@@ -859,82 +914,60 @@ function registerOpenScribeIpcHandlers(mainWindow) {
         sendDebugLog(mainWindow, 'Ollama already installed, skipping installation step');
       }
 
-      const finalOllamaPath = ollamaPath;
+      let finalOllamaPath = ollamaPath;
       if (!finalOllamaPath) {
-        sendDebugLog(mainWindow, 'Error: Bundled Ollama not found');
-        return { success: false, error: 'Bundled Ollama not found' };
-      }
-
-      sendDebugLog(mainWindow, 'Starting Ollama service...');
-      sendDebugLog(mainWindow, `$ ${finalOllamaPath} serve &`);
-      exec(`"${finalOllamaPath}" serve`, { detached: true });
-
-      sendDebugLog(mainWindow, 'Waiting for Ollama service to be ready...');
-      const maxAttempts = 15;
-      let ready = false;
-      for (let i = 0; i < maxAttempts; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        try {
-          const http = require('http');
-          ready = await new Promise((resolve) => {
-            const req = http.get('http://127.0.0.1:11434/api/tags', { timeout: 2000 }, (res) => {
-              resolve(res.statusCode === 200);
-            });
-            req.on('error', () => resolve(false));
-            req.on('timeout', () => {
-              req.destroy();
-              resolve(false);
+        finalOllamaPath = await new Promise((resolve) => {
+          exec('which ollama', { timeout: 5000 }, (error, stdout) => {
+            if (!error && stdout.trim()) {
+              resolve(stdout.trim());
+              return;
+            }
+            exec('/opt/homebrew/bin/ollama --version', { timeout: 5000 }, (error2) => {
+              if (!error2) {
+                resolve('/opt/homebrew/bin/ollama');
+                return;
+              }
+              exec('/usr/local/bin/ollama --version', { timeout: 5000 }, (error3) => {
+                if (!error3) {
+                  resolve('/usr/local/bin/ollama');
+                } else {
+                  resolve(null);
+                }
+              });
             });
           });
-          if (ready) {
-            sendDebugLog(mainWindow, `Ollama ready after ${i + 1} seconds`);
-            break;
-          }
-        } catch (e) {
-          // Continue polling
-        }
+        });
+      }
+      if (!finalOllamaPath) {
+        sendDebugLog(mainWindow, 'Error: Ollama executable not found after install/check step');
+        return { success: false, error: 'Ollama executable not found' };
       }
 
-      if (!ready) {
-        sendDebugLog(mainWindow, 'Warning: Ollama may not be fully ready, attempting pull anyway...');
-      }
-
+      sendDebugLog(mainWindow, `Using Ollama executable: ${finalOllamaPath}`);
       sendDebugLog(mainWindow, 'Downloading AI model (this may take several minutes)...');
-      sendDebugLog(mainWindow, `$ ${finalOllamaPath} pull llama3.2:3b`);
+      sendDebugLog(mainWindow, '$ openscribe-backend pull-model llama3.2:3b');
 
-      return new Promise((resolve) => {
-        const process = exec(`"${finalOllamaPath}" pull llama3.2:3b`, { timeout: 600000 });
-
-        process.stdout.on('data', (data) => {
-          sendDebugLog(mainWindow, data.toString().trim());
-        });
-
-        process.stderr.on('data', (data) => {
-          sendDebugLog(mainWindow, 'STDERR: ' + data.toString().trim());
-        });
-
-        process.on('close', async (code) => {
-          if (code === 0) {
-            sendDebugLog(mainWindow, 'AI model download completed successfully');
-            try {
-              await runPythonScript(mainWindow, 'simple_recorder.py', ['set-model', 'llama3.2:3b'], true);
-            } catch (e) {
-              // Non-fatal
-            }
-            trackEvent('setup_completed', { step: 'ollama_and_model' });
-            resolve({ success: true, message: 'Ollama and AI model ready' });
-          } else {
-            sendDebugLog(mainWindow, `AI model download failed with exit code: ${code}`);
-            trackEvent('setup_failed', { step: 'ollama_and_model' });
-            resolve({ success: false, error: 'Failed to download AI model', details: `Exit code: ${code}` });
-          }
-        });
-
-        process.on('error', (error) => {
-          sendDebugLog(mainWindow, `Process error: ${error.message}`);
-          resolve({ success: false, error: 'Failed to download AI model', details: error.message });
-        });
-      });
+      try {
+        await runPythonScript(mainWindow, 'simple_recorder.py', ['pull-model', 'llama3.2:3b']);
+        sendDebugLog(mainWindow, 'AI model download completed successfully');
+        try {
+          await runPythonScript(mainWindow, 'simple_recorder.py', ['set-model', 'llama3.2:3b'], true);
+        } catch (e) {
+          // Non-fatal
+        }
+        trackEvent('setup_completed', { step: 'ollama_and_model' });
+        return { success: true, message: 'Ollama and AI model ready' };
+      } catch (pullError) {
+        sendDebugLog(mainWindow, `AI model download failed: ${pullError.message}`);
+        try {
+          const diagnostics = await runPythonScript(mainWindow, 'simple_recorder.py', ['ollama-status'], true);
+          sendDebugLog(mainWindow, `Ollama diagnostics: ${diagnostics.trim()}`);
+        } catch (diagError) {
+          sendDebugLog(mainWindow, `Ollama diagnostics failed: ${diagError.message}`);
+        }
+        trackEvent('setup_failed', { step: 'ollama_and_model' });
+        return { success: false, error: 'Failed to download AI model', details: pullError.message };
+      }
     } catch (error) {
       return { success: false, error: error.message };
     }
@@ -1262,6 +1295,17 @@ function registerOpenScribeIpcHandlers(mainWindow) {
       return { success: false, error: error.message };
     }
   });
+
+  // Background warmup to reduce first note-generation latency.
+  setTimeout(() => {
+    runPythonScript(mainWindow, 'simple_recorder.py', ['warmup'], true)
+      .then((result) => {
+        console.log('Backend warmup result:', result.trim());
+      })
+      .catch((error) => {
+        console.warn('Backend warmup skipped:', error.message);
+      });
+  }, 2500);
 }
 
 async function checkForUpdates() {

@@ -16,7 +16,7 @@ from . import ollama_manager
 logger = logging.getLogger(__name__)
 
 # Keep local template definitions aligned with hosted templates.
-DEFAULT_CLINICAL_TEMPLATE = """# Clinical Note
+DEFAULT_CLINICAL_TEMPLATE = """# History and Physical
 
 ## Chief Complaint
 {{chief_complaint}}
@@ -27,14 +27,11 @@ DEFAULT_CLINICAL_TEMPLATE = """# Clinical Note
 ## Review of Systems
 {{ros}}
 
-## Physical Exam
-{{physical_exam}}
+## Past Medical History
+{{pmh}}
 
-## Assessment
-{{assessment}}
-
-## Plan
-{{plan}}
+## Medications
+{{medications}}
 """
 
 SOAP_CLINICAL_TEMPLATE = """# SOAP Note
@@ -86,10 +83,17 @@ class OllamaSummarizer:
         self.model_name = model_name
         self.client = None
         self.ollama_process = None
+        self._chat_options = {
+            "temperature": float(os.getenv("OPENSCRIBE_OLLAMA_TEMPERATURE", "0.1")),
+            "top_p": float(os.getenv("OPENSCRIBE_OLLAMA_TOP_P", "0.9")),
+            "num_predict": int(os.getenv("OPENSCRIBE_OLLAMA_NUM_PREDICT", "260")),
+        }
+        self._keep_alive = os.getenv("OPENSCRIBE_OLLAMA_KEEP_ALIVE", "30m")
 
         # Ensure Ollama is ready before initializing client
         self._ensure_ollama_ready()
         self.client = ollama.Client()
+        self._warmup_model()
     
     def _is_ollama_running(self) -> bool:
         """Check if Ollama service is running."""
@@ -227,6 +231,7 @@ class OllamaSummarizer:
     
     def _ensure_model_available(self) -> bool:
         """Ensure the required model is downloaded and available (uses HTTP API)."""
+        t0 = time.perf_counter()
         try:
             # Use the ollama Python client (HTTP API) instead of the binary
             # This avoids SIP/DYLD issues on macOS when running from a packaged app
@@ -238,6 +243,14 @@ class OllamaSummarizer:
                 logger.info(f"Model {self.model_name} is already available")
                 return True
 
+            # Prefer an already-installed fallback before attempting network pulls.
+            fallback_models = ["llama3.2:3b", "gemma3:4b"]
+            for fallback in fallback_models:
+                if fallback in model_names:
+                    logger.info(f"Using already-installed fallback model: {fallback}")
+                    self.model_name = fallback
+                    return True
+
             # Model not found, try to pull it
             logger.info(f"Downloading model {self.model_name}...")
             try:
@@ -246,14 +259,6 @@ class OllamaSummarizer:
                 return True
             except Exception as e:
                 logger.error(f"Failed to download model {self.model_name}: {e}")
-
-            # Try fallback models from supported list
-            fallback_models = ["llama3.2:3b", "gemma3:4b"]
-            for fallback in fallback_models:
-                if fallback in model_names:
-                    logger.info(f"Using already-installed fallback model: {fallback}")
-                    self.model_name = fallback
-                    return True
 
             for fallback in fallback_models:
                 logger.info(f"Trying fallback model: {fallback}")
@@ -270,10 +275,13 @@ class OllamaSummarizer:
         except Exception as e:
             logger.error(f"Error ensuring model availability: {e}")
             return False
+        finally:
+            logger.info("Model availability check completed in %.2fs", time.perf_counter() - t0)
     
     def _ensure_ollama_ready(self) -> bool:
         """Ensure Ollama service is running and model is available."""
         logger.info("Checking Ollama service...")
+        t0 = time.perf_counter()
         
         # Step 1: Check if Ollama is running
         if not self._is_ollama_running():
@@ -285,9 +293,25 @@ class OllamaSummarizer:
         # Step 2: Ensure model is available
         if not self._ensure_model_available():
             raise Exception(f"Failed to ensure model {self.model_name} is available")
-        
-        logger.info(f"Ollama ready with model {self.model_name}")
+
+        logger.info(f"Ollama ready with model {self.model_name} (%.2fs)", time.perf_counter() - t0)
         return True
+
+    def _warmup_model(self) -> None:
+        """Issue a tiny request so first real note generation is faster."""
+        if os.getenv("OPENSCRIBE_OLLAMA_WARMUP", "0").lower() not in {"1", "true", "yes", "on"}:
+            return
+        try:
+            t0 = time.perf_counter()
+            self.client.chat(
+                model=self.model_name,
+                messages=[{"role": "user", "content": "Reply with OK."}],
+                options={"num_predict": 2, "temperature": 0},
+                keep_alive=self._keep_alive,
+            )
+            logger.info("Ollama model warmup completed in %.2fs", time.perf_counter() - t0)
+        except Exception as e:
+            logger.warning("Ollama warmup skipped due to error: %s", e)
         
     def _create_permissive_prompt(self, transcript: str) -> str:
         """
@@ -412,12 +436,97 @@ TEMPLATE INSTRUCTIONS:
 - Leave empty sections empty (do not write "Not discussed" or similar)
 - Do not wrap output in code fences
 - Do not add extra headings or explanatory text
+- If a section has no explicit support in transcript/context, omit content entirely for that section
 
 ACTIVE TEMPLATE: {template_name}
 
 TRANSCRIPT:
 {transcript}
 """
+
+    def _create_history_physical_json_prompt(self, transcript: str) -> str:
+        return f"""You are a clinical documentation assistant.
+
+Extract ONLY information explicitly stated in the transcript. Do not infer, assume, or add missing details.
+
+Return ONLY valid JSON with these exact keys:
+- chief_complaint: string or null
+- hpi: string or null
+- ros: array of strings (bullet-ready) or []
+- pmh: string or null
+- medications: array of strings (include doses only if explicitly stated) or []
+
+STRICT RULES:
+- If a section is not explicitly supported by the transcript, return null (or [] for arrays).
+- No extra keys.
+- No markdown.
+
+TRANSCRIPT:
+{transcript}
+"""
+
+    def _extract_json_object(self, text: str) -> Dict[str, Any]:
+        if not text:
+            return {}
+        raw = text.strip()
+        if raw.startswith("```json"):
+            raw = raw.replace("```json", "").replace("```", "").strip()
+        elif raw.startswith("```"):
+            raw = raw.replace("```", "").strip()
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            pass
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(raw[start : end + 1])
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    def _render_history_physical_note(self, fields: Dict[str, Any]) -> str:
+        def clean_text(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value.strip()
+            return str(value).strip()
+
+        def clean_list(value: Any) -> list[str]:
+            if not isinstance(value, list):
+                return []
+            out = []
+            for item in value:
+                item_txt = clean_text(item)
+                if item_txt:
+                    out.append(item_txt)
+            return out
+
+        chief_complaint = clean_text(fields.get("chief_complaint"))
+        hpi = clean_text(fields.get("hpi"))
+        ros = clean_list(fields.get("ros"))
+        pmh = clean_text(fields.get("pmh"))
+        medications = clean_list(fields.get("medications"))
+
+        sections: list[str] = []
+        if chief_complaint:
+            sections.append(f"Chief Complaint:\n{chief_complaint}")
+        if hpi:
+            sections.append(f"History of Present Illness:\n{hpi}")
+        if ros:
+            ros_bullets = "\n".join(f"- {item}" for item in ros)
+            sections.append(f"Review of Systems:\n{ros_bullets}")
+        if pmh:
+            sections.append(f"Past Medical History:\n{pmh}")
+        if medications:
+            med_bullets = "\n".join(f"- {item}" for item in medications)
+            sections.append(f"Medications:\n{med_bullets}")
+
+        return "\n\n".join(sections)
 
     def generate_clinical_note(self, transcript: str, note_type: Optional[str] = None) -> str:
         """
@@ -430,18 +539,62 @@ TRANSCRIPT:
             return template.replace("{{chief_complaint}}", "") \
                 .replace("{{hpi}}", "") \
                 .replace("{{ros}}", "") \
+                .replace("{{pmh}}", "") \
+                .replace("{{medications}}", "") \
                 .replace("{{physical_exam}}", "") \
                 .replace("{{assessment}}", "") \
                 .replace("{{plan}}", "")
+        normalized_transcript = transcript.strip().lower()
+        if normalized_transcript in {"none", "no speech detected in audio", "audio file too small or empty"}:
+            return ""
 
         try:
-            prompt = self._create_clinical_note_prompt(transcript, note_type)
-            ollama_response = self.client.chat(
-                model=self.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                options={"timeout": 1800},
+            template_name = self._template_name_from_note_type(note_type)
+            is_history_physical = template_name == "default"
+            prompt = (
+                self._create_history_physical_json_prompt(transcript)
+                if is_history_physical
+                else self._create_clinical_note_prompt(transcript, note_type)
             )
+            llm_t0 = time.perf_counter()
+            max_retries = 3
+            ollama_response = None
+            for attempt in range(max_retries):
+                try:
+                    if attempt > 0:
+                        logger.info("Clinical note retry %s/%s", attempt + 1, max_retries)
+                        self._ensure_ollama_ready()
+                        self.client = ollama.Client()
+                        time.sleep(1)
+                    ollama_response = self.client.chat(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        options={
+                            **self._chat_options,
+                            "num_predict": min(self._chat_options.get("num_predict", 260), 220)
+                            if is_history_physical
+                            else self._chat_options.get("num_predict", 260),
+                            "timeout": 1800,
+                        },
+                        format="json" if is_history_physical else None,
+                        keep_alive=self._keep_alive,
+                    )
+                    break
+                except Exception as e:
+                    logger.error("Clinical note attempt %s failed: %s", attempt + 1, e)
+                    if attempt == max_retries - 1:
+                        raise
+            llm_elapsed = time.perf_counter() - llm_t0
+            logger.info("Clinical note LLM call completed in %.2fs", llm_elapsed)
+            eval_count = ollama_response.get("eval_count")
+            eval_duration = ollama_response.get("eval_duration")
+            if eval_count and eval_duration:
+                tps = eval_count / (eval_duration / 1_000_000_000)
+                logger.info("Clinical note generation speed: %.1f tok/s (%s tokens)", tps, eval_count)
             response_text = ollama_response["message"]["content"].strip()
+            if is_history_physical:
+                parsed = self._extract_json_object(response_text)
+                return self._render_history_physical_note(parsed)
             if response_text.startswith("```markdown"):
                 response_text = response_text.replace("```markdown", "").replace("```", "").strip()
             elif response_text.startswith("```"):
@@ -452,6 +605,8 @@ TRANSCRIPT:
             return template.replace("{{chief_complaint}}", "") \
                 .replace("{{hpi}}", "") \
                 .replace("{{ros}}", "") \
+                .replace("{{pmh}}", "") \
+                .replace("{{medications}}", "") \
                 .replace("{{physical_exam}}", "") \
                 .replace("{{assessment}}", "") \
                 .replace("{{plan}}", "")

@@ -10,6 +10,7 @@ import wave
 import threading
 import time
 import atexit
+import os
 from pathlib import Path
 from typing import Optional
 import logging
@@ -31,10 +32,14 @@ atexit.register(cleanup_sounddevice)
 
 
 class AudioRecorder:
-    def __init__(self, sample_rate: int = 44100, channels: int = 1):
+    def __init__(self, sample_rate: int = 16000, channels: int = 1):
         if not AUDIO_AVAILABLE:
             raise ImportError("Audio dependencies not available. Please install sounddevice and numpy.")
 
+        # 16kHz mono is sufficient for speech transcription and avoids later resampling cost.
+        env_sample_rate = os.environ.get("OPENSCRIBE_AUDIO_SAMPLE_RATE")
+        if env_sample_rate and env_sample_rate.isdigit():
+            sample_rate = int(env_sample_rate)
         self.sample_rate = sample_rate
         self.channels = channels
         self.recording = False

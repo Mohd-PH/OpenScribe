@@ -98,6 +98,7 @@ contextBridge.exposeInMainWorld('desktop', {
       const allowed = new Set([
         'debug-log',
         'toggle-recording-hotkey',
+        'processing-stage',
         'processing-complete',
         'model-pull-progress',
         'model-pull-complete',
