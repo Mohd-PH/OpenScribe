@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src=".github/openscribe-banner.png" alt="OpenScribe Banner" width="100%" />
+<img src=".github/openscribe-banner.png" alt="OpenScribe Banner" width="20%" />
 
 # OpenScribe
 
