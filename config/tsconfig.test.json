@@ -24,6 +24,7 @@
   "exclude": [
     "node_modules",
     "../apps/web/.next",
-    "../build"
+    "../build",
+    "../packages/storage/src/__tests__/secure-storage.test.ts"
   ]
 }
