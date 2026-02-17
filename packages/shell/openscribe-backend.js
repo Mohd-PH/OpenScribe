@@ -634,6 +634,8 @@ function registerOpenScribeIpcHandlers(mainWindow) {
       });
 
       let hasStarted = false;
+      let processingCompleteSent = false;
+      let lastBackendError = '';
 
       currentRecordingProcess.stdout.on('data', (data) => {
         const output = data.toString();
@@ -642,6 +644,13 @@ function registerOpenScribeIpcHandlers(mainWindow) {
           const trimmed = line.trim();
           if (!trimmed) return;
           sendDebugLog(mainWindow, trimmed);
+          if (
+            trimmed.includes('summarizer_unavailable')
+            || trimmed.startsWith('ERROR:')
+            || trimmed.includes('Processing pipeline failed:')
+          ) {
+            lastBackendError = trimmed;
+          }
 
           // Emit granular processing stages so UI can show transcription and note generation separately.
           if (mainWindow && !mainWindow.isDestroyed()) {
@@ -702,6 +711,7 @@ function registerOpenScribeIpcHandlers(mainWindow) {
                   message: 'Recording and processing completed successfully',
                   meetingData: processedMeeting,
                 });
+                processingCompleteSent = true;
               })
               .catch(() => {
                 mainWindow.webContents.send('processing-complete', {
@@ -709,6 +719,7 @@ function registerOpenScribeIpcHandlers(mainWindow) {
                   sessionName: actualSessionName,
                   message: 'Recording and processing completed successfully',
                 });
+                processingCompleteSent = true;
               });
           }
         }
@@ -721,12 +732,26 @@ function registerOpenScribeIpcHandlers(mainWindow) {
       currentRecordingProcess.stderr.on('data', (data) => {
         const output = data.toString();
         output.split('\n').forEach((line) => {
-          if (line.trim()) sendDebugLog(mainWindow, 'STDERR: ' + line.trim());
+          const trimmed = line.trim();
+          if (trimmed) {
+            sendDebugLog(mainWindow, 'STDERR: ' + trimmed);
+            lastBackendError = trimmed;
+          }
         });
       });
 
       currentRecordingProcess.on('close', (code) => {
         sendDebugLog(mainWindow, `Recording process completed with exit code: ${code}`);
+        if (code !== 0 && !processingCompleteSent && mainWindow && !mainWindow.isDestroyed()) {
+          const message = lastBackendError.includes('summarizer_unavailable')
+            ? 'Summarizer unavailable. Install/start Ollama and pull a model (e.g. `ollama pull llama3.2:3b`).'
+            : (lastBackendError || `Recording backend failed with exit code ${code}`);
+          mainWindow.webContents.send('processing-complete', {
+            success: false,
+            sessionName: actualSessionName,
+            error: message,
+          });
+        }
         currentRecordingProcess = null;
       });
 
