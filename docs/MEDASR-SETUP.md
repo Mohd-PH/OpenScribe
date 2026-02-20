@@ -1,4 +1,7 @@
-# Using Local MedASR for Transcription
+# Using Local MedASR for Transcription (Legacy)
+
+> Note: mixed web mode now defaults to local Whisper (`TRANSCRIPTION_PROVIDER=whisper_local`).
+> This MedASR guide is retained as a fallback path.
 
 OpenScribe supports **Google's MedASR** for local speech-to-text transcription, eliminating the need for OpenAI API keys and keeping all audio data on your machine.
 

@@ -63,7 +63,7 @@ export async function transcribeWavBuffer(
           "MedASR server is not ready. Please ensure the server is running:\n" +
           "  pnpm medasr:server\n" +
           "Or start both servers together:\n" +
-          "  pnpm dev:local"
+          "  pnpm dev:local:medasr"
         )
       }
       
@@ -79,7 +79,7 @@ export async function transcribeWavBuffer(
         "Please start the MedASR server:\n" +
         "  pnpm medasr:server\n" +
         "Or start both servers together:\n" +
-        "  pnpm dev:local"
+        "  pnpm dev:local:medasr"
       )
     }
     throw error

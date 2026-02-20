@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server"
-import { parseWavHeader, transcribeWithMedASR, transcribeWithWhisper } from "@transcription"
+import { parseWavHeader, resolveTranscriptionProvider, transcribeWithResolvedProvider } from "@transcription"
 import { transcriptionSessionStore } from "@transcript-assembly"
 import { writeAuditEntry } from "@storage/audit-log"
 
@@ -10,14 +10,6 @@ function jsonError(status: number, code: string, message: string) {
     status,
     headers: { "Content-Type": "application/json" },
   })
-}
-
-function resolveTranscriptionProvider() {
-  const provider = process.env.TRANSCRIPTION_PROVIDER?.toLowerCase()
-  if (provider === "medasr" || provider === "local") {
-    return "medasr"
-  }
-  return "whisper"
 }
 
 export async function POST(req: NextRequest) {
@@ -60,11 +52,10 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const provider = resolveTranscriptionProvider()
-      const transcript =
-        provider === "medasr"
-          ? await transcribeWithMedASR(Buffer.from(arrayBuffer), `segment-${seqNo}.wav`)
-          : await transcribeWithWhisper(Buffer.from(arrayBuffer), `segment-${seqNo}.wav`)
+      const resolvedProvider = resolveTranscriptionProvider()
+      const startedAtMs = Date.now()
+      const transcript = await transcribeWithResolvedProvider(Buffer.from(arrayBuffer), `segment-${seqNo}.wav`, resolvedProvider)
+      const latencyMs = Date.now() - startedAtMs
       transcriptionSessionStore.addSegment(sessionId, {
         seqNo,
         startMs,
@@ -82,6 +73,9 @@ export async function POST(req: NextRequest) {
         metadata: {
           seq_no: seqNo,
           duration_ms: durationMs,
+          transcription_provider: resolvedProvider.provider,
+          transcription_model: resolvedProvider.model,
+          transcription_latency_ms: latencyMs,
         },
       })
 
@@ -90,6 +84,7 @@ export async function POST(req: NextRequest) {
       })
     } catch (error) {
       console.error("Segment transcription failed", error)
+      const resolvedProvider = resolveTranscriptionProvider()
       transcriptionSessionStore.emitError(
         sessionId,
         "api_error",
@@ -104,6 +99,8 @@ export async function POST(req: NextRequest) {
         error_message: error instanceof Error ? error.message : "Transcription API failed",
         metadata: {
           seq_no: seqNo,
+          transcription_provider: resolvedProvider.provider,
+          transcription_model: resolvedProvider.model,
         },
       })
 

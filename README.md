@@ -25,7 +25,7 @@ Open-source AI medical scribe for recording encounters and generating structured
 
 ## Project Overview
 
-OpenScribe is a free MIT license open source AI Medical Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The primary deployment path is local-only (on-device transcription + note generation). A cloud/OpenAI-hosted path is available as backup.
+OpenScribe is a free MIT license open source AI Medical Scribe that helps clinicians record patient encounters, transcribe audio, and generate structured draft clinical notes using LLMs. The default web deployment path is mixed mode: local Whisper transcription + Anthropic Claude note generation. A fully local desktop path is also available.
 
 - [Demo](https://www.loom.com/share/1ccd4eec00eb4ddab700d32734f33c28)
 - [Architecture](./architecture.md)
@@ -60,53 +60,57 @@ cd OpenScribe
 pnpm install
 ```
 
-### 3. Choose Runtime Mode (Local-Only Primary)
+### 3. Configure Environment (Mixed Web Default)
 
-#### Primary: Local-Only (recommended)
-
-Use the local backend and models as the default path:
-
-`/Users/sammargolis/OpenScribe/local-only/README.md`
-
-#### Backup: Cloud/OpenAI + Claude
-
-If you want hosted inference as a fallback, configure API keys:
+Create env defaults:
 
 ```bash
 pnpm run setup  # Auto-generates .env.local with secure storage key
 ```
 
-Edit `apps/web/.env.local` and add your API keys:
+Edit `apps/web/.env.local` and add:
 
 ```bash
-OPENAI_API_KEY=sk-proj-YOUR_KEY_HERE
+TRANSCRIPTION_PROVIDER=whisper_local
+WHISPER_LOCAL_MODEL=tiny.en
 ANTHROPIC_API_KEY=sk-ant-YOUR_KEY_HERE
 # NEXT_PUBLIC_SECURE_STORAGE_KEY is auto-generated, don't modify
 ```
 
+`OPENAI_API_KEY` is optional unless you switch to `TRANSCRIPTION_PROVIDER=whisper_openai`.
+
 ### 4. Start the App
 
 ```bash
-pnpm dev          # Web app → http://localhost:3001
-pnpm dev:desktop  # OR desktop app (Electron)
+pnpm dev:local    # One command: Whisper local server + web app
+```
+
+Optional desktop app path:
+
+```bash
+pnpm dev:desktop
 ```
 
 ---
 
 ## Runtime Modes
 
-OpenScribe supports two workflows, with **local-only as the primary path**.
+OpenScribe supports three workflows. **Mixed web mode is the default path.**
 
-### Local-only (primary)
+### Mixed Web (default)
+- Transcription: local Whisper server (`pnpm whisper:server`) with default model `tiny.en`
+- Notes: larger model (default Claude in web path)
+- Start everything with one command: `pnpm dev:local`
+- Configure with `TRANSCRIPTION_PROVIDER=whisper_local` in `apps/web/.env.local`
+- Setup guide: `docs/WHISPER-LOCAL-SETUP.md`
+
+### Local-only Desktop (optional)
 - Transcription: local Whisper backend in `local-only/openscribe-backend`
-  - `whisper.cpp` (pywhispercpp), model default `base`
-  - optional `openai-whisper` backend (env override / availability dependent)
-- Notes: local Ollama models (default config `llama3.2:1b`; setup commonly installs `llama3.2:3b`; `gemma3:4b` is supported)
+- Notes: local Ollama models (`llama3.2:*`, `gemma3:4b`)
 - No cloud inference in this path
+- Setup guide: `/Users/sammargolis/OpenScribe/local-only/README.md`
 
-See `/Users/sammargolis/OpenScribe/local-only/README.md` for setup.
-
-### Cloud/OpenAI + Claude (backup)
+### Cloud/OpenAI + Claude (fallback)
 - Transcription: OpenAI Whisper API
 - Notes: Anthropic Claude (or other hosted LLM)
 - Requires API keys in `apps/web/.env.local`
@@ -135,8 +139,8 @@ rm -rf node_modules pnpm-lock.yaml && pnpm install
 
 OpenScribe exists to provide a simple, open-source alternative to cloud dependent clinical documentation tools. The project is built on core principles:
 
-- **Local-first**: All data (audio recordings, transcripts, notes) is stored locally in the browser by default
-- **Privacy-conscious**: No data collection, no analytics, no cloud dependency unless explicitly configured by the user
+- **Local-first storage**: Encounter data is stored locally in the browser by default
+- **Privacy-conscious**: No analytics or telemetry in the web app; external model calls are explicit and configurable
 - **Modular**: Components can be swapped or extended (e.g., different LLM providers, transcription services)
 
 ## Local MedGemma (Text-Only) Scribe
@@ -219,9 +223,10 @@ See [architecture.md](./architecture.md) for complete details.
 **Key Components:**
 - **UI Layer**: React components in `apps/web/` using Next.js App Router
 - **Audio Ingest**: Browser MediaRecorder API → WebM/MP4 blob
-- **Transcription (local path)**: Whisper (`whisper.cpp` or `openai-whisper`, depending on backend availability/config)
-- **LLM (local path)**: Ollama local models (`llama3.2:*`, `gemma3:4b`)
-- **Cloud backup path**: OpenAI Whisper API + hosted provider via `packages/llm`
+- **Transcription (default web path)**: local Whisper server (`whisper.cpp` via `pywhispercpp`, model `tiny.en`)
+- **LLM (default web path)**: Anthropic Claude via `packages/llm`
+- **Fully local desktop path**: Whisper + Ollama via `local-only/openscribe-backend`
+- **Cloud fallback path**: OpenAI Whisper API + hosted provider via `packages/llm`
 - **Note Core**: Structured clinical note generation and validation
 - **Storage**: AES-GCM encrypted browser localStorage
 
@@ -238,7 +243,7 @@ See [architecture.md](./architecture.md) for complete details.
 ## Privacy & Data Handling
 
 **Storage**: AES-GCM encrypted localStorage. Audio processed in-memory, not persisted.  
-**Transmission**: All external API calls (audio → Whisper API, transcripts → Anthropic Claude) use HTTPS/TLS encryption. The application enforces HTTPS-only connections and displays a security warning if accessed over HTTP in production builds.  
+**Transmission**: In the default mixed mode, audio stays local for transcription and transcript text is sent to Anthropic Claude over HTTPS/TLS for note generation. If `TRANSCRIPTION_PROVIDER=whisper_openai`, audio is sent to OpenAI Whisper over HTTPS/TLS. The application enforces HTTPS-only connections and displays a security warning if accessed over HTTP in production builds.  
 **No Tracking**: Zero analytics, telemetry, or cloud sync
 
 **Use Responsibility**  
