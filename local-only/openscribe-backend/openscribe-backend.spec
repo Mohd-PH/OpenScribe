@@ -48,6 +48,12 @@ hiddenimports = [
     # CLI
     'click',
 
+    # Whisper HTTP server (mixed desktop mode)
+    'fastapi',
+    'starlette',
+    'uvicorn',
+    'python_multipart',
+
     # Date handling
     'dateutil',
     'dateutil.parser',
@@ -70,6 +76,9 @@ hiddenimports = [
 # Collect submodules
 hiddenimports += collect_submodules('pydantic')
 hiddenimports += collect_submodules('numpy')
+hiddenimports += collect_submodules('fastapi')
+hiddenimports += collect_submodules('starlette')
+hiddenimports += collect_submodules('uvicorn')
 
 # Collect data files
 datas = []

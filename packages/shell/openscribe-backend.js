@@ -261,6 +261,108 @@ let currentRecordingProcess = null;
 let processingQueue = [];
 let isProcessing = false;
 let currentProcessingJob = null;
+let whisperServiceProcess = null;
+const WHISPER_LOCAL_PORT = Number(process.env.WHISPER_LOCAL_PORT || 8002);
+const WHISPER_LOCAL_HOST = process.env.WHISPER_LOCAL_HOST || '127.0.0.1';
+
+function resolveWhisperServerCommand() {
+  const backend = resolveBackendCommand(['whisper-server', '--port', String(WHISPER_LOCAL_PORT), '--model', 'tiny.en']);
+  if (backend.mode === 'binary' && backend.command) {
+    return backend;
+  }
+
+  const scriptPath = path.join(process.cwd(), 'scripts', 'whisper_server.py');
+  const backendProjectRoot = path.join(process.cwd(), 'local-only', 'openscribe-backend');
+  const venvPython =
+    process.platform === 'win32'
+      ? path.join(backendProjectRoot, '.venv-backend', 'Scripts', 'python.exe')
+      : path.join(backendProjectRoot, '.venv-backend', 'bin', 'python3');
+  const pythonCommand = fs.existsSync(venvPython)
+    ? venvPython
+    : (process.platform === 'win32' ? 'python' : 'python3');
+
+  if (fs.existsSync(scriptPath)) {
+    return {
+      command: pythonCommand,
+      args: [scriptPath, '--host', WHISPER_LOCAL_HOST, '--port', String(WHISPER_LOCAL_PORT), '--model', 'tiny.en', '--backend', 'cpp'],
+      cwd: process.cwd(),
+      mode: 'script',
+    };
+  }
+
+  return backend;
+}
+
+async function isWhisperServiceHealthy() {
+  try {
+    const res = await fetch(`http://${WHISPER_LOCAL_HOST}:${WHISPER_LOCAL_PORT}/health`, { method: 'GET' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureWhisperService(mainWindow) {
+  if (await isWhisperServiceHealthy()) {
+    return { success: true, running: true, reused: true };
+  }
+
+  if (whisperServiceProcess && !whisperServiceProcess.killed) {
+    for (let i = 0; i < 15; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      if (await isWhisperServiceHealthy()) {
+        return { success: true, running: true, reused: true };
+      }
+    }
+  }
+
+  const backend = resolveWhisperServerCommand();
+  if (!backend.command) {
+    return { success: false, error: 'Unable to resolve Whisper service command' };
+  }
+
+  sendDebugLog(mainWindow, `Starting Whisper service: ${backend.command} ${backend.args.join(' ')}`);
+  whisperServiceProcess = spawn(backend.command, backend.args, {
+    cwd: backend.cwd,
+    env: {
+      ...process.env,
+      WHISPER_LOCAL_MODEL: process.env.WHISPER_LOCAL_MODEL || 'tiny.en',
+      WHISPER_LOCAL_BACKEND: process.env.WHISPER_LOCAL_BACKEND || 'cpp',
+      WHISPER_LOCAL_GPU: process.env.WHISPER_LOCAL_GPU || '1',
+      PYTHONUNBUFFERED: '1',
+    },
+    stdio: 'pipe',
+  });
+
+  whisperServiceProcess.stdout.on('data', (data) => {
+    const text = data.toString().trim();
+    if (text) sendDebugLog(mainWindow, `[whisper] ${text}`);
+  });
+  whisperServiceProcess.stderr.on('data', (data) => {
+    const text = data.toString().trim();
+    if (text) sendDebugLog(mainWindow, `[whisper:stderr] ${text}`);
+  });
+  whisperServiceProcess.on('close', (code) => {
+    sendDebugLog(mainWindow, `Whisper service exited with code ${code}`);
+    whisperServiceProcess = null;
+  });
+
+  for (let i = 0; i < 20; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (await isWhisperServiceHealthy()) {
+      return { success: true, running: true, reused: false };
+    }
+  }
+
+  return { success: false, error: `Whisper service failed health check on ${WHISPER_LOCAL_HOST}:${WHISPER_LOCAL_PORT}` };
+}
+
+function stopWhisperService() {
+  if (whisperServiceProcess && !whisperServiceProcess.killed) {
+    whisperServiceProcess.kill('SIGTERM');
+  }
+  whisperServiceProcess = null;
+}
 
 async function processNextInQueue(mainWindow) {
   if (isProcessing || processingQueue.length === 0) {
@@ -609,6 +711,28 @@ function registerOpenScribeIpcHandlers(mainWindow) {
       currentJob: currentProcessingJob?.sessionName || null,
       hasRecording: currentRecordingProcess !== null,
     };
+  });
+
+  ipcMain.handle('ensure-whisper-service', async () => {
+    try {
+      return await ensureWhisperService(mainWindow);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('whisper-service-status', async () => {
+    try {
+      const healthy = await isWhisperServiceHealthy();
+      return {
+        success: true,
+        running: healthy,
+        host: WHISPER_LOCAL_HOST,
+        port: WHISPER_LOCAL_PORT,
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   });
 
   ipcMain.handle('start-recording-ui', async (_, sessionName, noteType = 'history_physical') => {
@@ -1362,6 +1486,10 @@ function registerOpenScribeIpcHandlers(mainWindow) {
 
   // Background warmup to reduce first note-generation latency.
   setTimeout(() => {
+    ensureWhisperService(mainWindow).catch((error) => {
+      console.warn('Whisper service warmup skipped:', error.message);
+    });
+
     runPythonScript(mainWindow, 'simple_recorder.py', ['warmup'], true)
       .then((result) => {
         console.log('Backend warmup result:', result.trim());
@@ -1465,4 +1593,5 @@ module.exports = {
   shutdownTelemetry,
   trackEvent,
   durationBucket,
+  stopWhisperService,
 };

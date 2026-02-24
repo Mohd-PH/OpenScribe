@@ -84,6 +84,8 @@ contextBridge.exposeInMainWorld('desktop', {
         'get-telemetry',
         'set-telemetry',
         'pull-model',
+        'ensure-whisper-service',
+        'whisper-service-status',
         'check-for-updates',
         'check-announcements',
         'open-release-page',

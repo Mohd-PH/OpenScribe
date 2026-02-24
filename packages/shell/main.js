@@ -8,6 +8,7 @@ const {
   initTelemetry,
   shutdownTelemetry,
   trackEvent,
+  stopWhisperService,
 } = require('./openscribe-backend');
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -198,6 +199,7 @@ app.on('before-quit', async (event) => {
   }, 3000);
   
   try {
+    stopWhisperService();
     await stopNextServer();
     console.log('Cleanup complete');
   } catch (error) {
@@ -210,6 +212,7 @@ app.on('before-quit', async (event) => {
 });
 
 app.on('will-quit', async () => {
+  stopWhisperService();
   globalShortcut.unregisterAll();
   await shutdownTelemetry();
 });

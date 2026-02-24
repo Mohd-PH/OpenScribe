@@ -7,7 +7,17 @@ import { NoteEditor } from "@note-rendering"
 import { useAudioRecorder, type RecordedSegment, warmupMicrophonePermission, warmupSystemAudioPermission } from "@audio"
 import { useSegmentUpload, type UploadError } from "@transcription";
 import { generateClinicalNote } from "@/app/actions"
-import { getPreferences, setPreferences, type NoteLength, debugLog, debugLogPHI, debugError, debugWarn, initializeAuditLog } from "@storage"
+import {
+  getPreferences,
+  setPreferences,
+  type NoteLength,
+  type ProcessingMode,
+  debugLog,
+  debugLogPHI,
+  debugError,
+  debugWarn,
+  initializeAuditLog,
+} from "@storage"
 
 type ViewState =
   | { type: "idle" }
@@ -97,6 +107,7 @@ function HomePageContent() {
 
   const [showSettingsDialog, setShowSettingsDialog] = useState(false)
   const [noteLength, setNoteLengthState] = useState<NoteLength>("long")
+  const [processingMode, setProcessingModeState] = useState<ProcessingMode>("mixed")
   const [localBackendAvailable, setLocalBackendAvailable] = useState(false)
   const [localDurationMs, setLocalDurationMs] = useState(0)
   const [localPaused, setLocalPaused] = useState(false)
@@ -107,6 +118,7 @@ function HomePageContent() {
   useEffect(() => {
     const prefs = getPreferences()
     setNoteLengthState(prefs.noteLength)
+    setProcessingModeState(prefs.processingMode)
 
     // Initialize audit logging system (cleanup old entries, setup periodic cleanup)
     void initializeAuditLog()
@@ -118,6 +130,14 @@ function HomePageContent() {
     localBackendRef.current = backend ?? null
     setLocalBackendAvailable(!!backend)
   }, [])
+
+  useEffect(() => {
+    if (processingMode !== "local") return
+    if (localBackendAvailable) return
+    debugWarn("Local-only mode selected but desktop backend is unavailable; falling back to mixed mode")
+    setProcessingModeState("mixed")
+    void setPreferences({ processingMode: "mixed" })
+  }, [localBackendAvailable, processingMode])
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -182,6 +202,13 @@ function HomePageContent() {
     setNoteLengthState(length)
     setPreferences({ noteLength: length })
   }
+
+  const handleProcessingModeChange = (mode: ProcessingMode) => {
+    setProcessingModeState(mode)
+    setPreferences({ processingMode: mode })
+  }
+
+  const useLocalBackend = processingMode === "local" && localBackendAvailable
 
   const handleUploadError = useCallback((error: UploadError) => {
     debugError("Segment upload failed:", error.code, "-", error.message);
@@ -430,7 +457,7 @@ function HomePageContent() {
   }, [])
 
   useEffect(() => {
-    if (!sessionId || localBackendAvailable) return
+    if (!sessionId || useLocalBackend) return
     
     debugLog('[EventSource] Connecting to session:', sessionId)
     const baseUrl = apiBaseUrlRef.current
@@ -458,7 +485,7 @@ function HomePageContent() {
         eventSourceRef.current = null
       }
     }
-  }, [handleFinalEvent, handleSegmentEvent, handleStreamError, sessionId])
+  }, [handleFinalEvent, handleSegmentEvent, handleStreamError, sessionId, useLocalBackend])
   
   // Cleanup EventSource on page unload/refresh
   useEffect(() => {
@@ -510,7 +537,7 @@ function HomePageContent() {
     visit_reason: string
   }) => {
     try {
-      if (!localBackendAvailable) {
+      if (!useLocalBackend) {
         cleanupSession()
       }
       finalTranscriptRef.current = ""
@@ -520,7 +547,7 @@ function HomePageContent() {
       setProcessingMetrics({})
 
       const session = crypto.randomUUID()
-      if (!localBackendAvailable) {
+      if (!useLocalBackend) {
         startNewSession(session)
       }
 
@@ -535,7 +562,14 @@ function HomePageContent() {
       // Optimistically flip to recording immediately for responsive UI.
       setView({ type: "recording", encounterId: encounter.id })
       setTranscriptionStatus("in-progress")
-      if (localBackendAvailable && localBackendRef.current) {
+      if (!useLocalBackend && localBackendRef.current) {
+        const whisperReady = await localBackendRef.current.invoke("ensure-whisper-service")
+        if (!(whisperReady as { success?: boolean }).success) {
+          throw new Error((whisperReady as { error?: string }).error || "Whisper service unavailable")
+        }
+      }
+
+      if (useLocalBackend && localBackendRef.current) {
         const sessionName = `OpenScribe ${encounter.id}`
         localSessionNameRef.current = sessionName
         setLocalDurationMs(0)
@@ -608,7 +642,7 @@ function HomePageContent() {
       transcriptionStartedAt: Date.now(),
     })
 
-    if (localBackendAvailable && localBackendRef.current) {
+    if (useLocalBackend && localBackendRef.current) {
       // Local backend processes in sequence (transcription -> note generation).
       // Keep note generation pending until backend emits stage updates.
       setTranscriptionStatus("in-progress")
@@ -637,7 +671,7 @@ function HomePageContent() {
   }
 
   const handlePauseRecording = async () => {
-    if (localBackendAvailable && localBackendRef.current) {
+    if (useLocalBackend && localBackendRef.current) {
       await localBackendRef.current.invoke("pause-recording-ui")
       setLocalPaused(true)
       return
@@ -646,7 +680,7 @@ function HomePageContent() {
   }
 
   const handleResumeRecording = async () => {
-    if (localBackendAvailable && localBackendRef.current) {
+    if (useLocalBackend && localBackendRef.current) {
       await localBackendRef.current.invoke("resume-recording-ui")
       setLocalPaused(false)
       localLastTickRef.current = Date.now()
@@ -656,7 +690,7 @@ function HomePageContent() {
   }
 
   const handleRetryTranscription = async () => {
-    if (localBackendAvailable && localBackendRef.current) {
+    if (useLocalBackend && localBackendRef.current) {
       const meeting = lastMeetingDataRef.current
       const summaryFile = meeting?.session_info?.summary_file as string | undefined
       if (!summaryFile) {
@@ -727,7 +761,7 @@ function HomePageContent() {
   }
 
   const handleRetryNoteGeneration = async () => {
-    if (localBackendAvailable) {
+    if (useLocalBackend) {
       return
     }
     const transcript = finalTranscriptRef.current
@@ -743,7 +777,7 @@ function HomePageContent() {
   }
 
   useEffect(() => {
-    if (!localBackendAvailable || !localBackendRef.current) return
+    if (!useLocalBackend || !localBackendRef.current) return
 
     const backend = localBackendRef.current
     const stageHandler = (_event: unknown, payload: unknown) => {
@@ -850,10 +884,10 @@ function HomePageContent() {
       backend.removeAllListeners("processing-stage")
       backend.removeAllListeners("processing-complete")
     }
-  }, [buildNoteFromMeeting, duration, localBackendAvailable])
+  }, [buildNoteFromMeeting, duration, useLocalBackend])
 
   useEffect(() => {
-    if (!localBackendAvailable || view.type !== "recording") return
+    if (!useLocalBackend || view.type !== "recording") return
     const tick = () => {
       const now = Date.now()
       if (localLastTickRef.current && !localPaused) {
@@ -864,7 +898,7 @@ function HomePageContent() {
     tick()
     const interval = window.setInterval(tick, 250)
     return () => window.clearInterval(interval)
-  }, [localBackendAvailable, localPaused, view.type])
+  }, [useLocalBackend, localPaused, view.type])
 
   const currentEncounter = encounters.find((e: Encounter) => "encounterId" in view && e.id === view.encounterId)
   const selectedEncounter = view.type === "viewing" ? encounters.find((e: Encounter) => e.id === view.encounterId) : null
@@ -911,8 +945,8 @@ function HomePageContent() {
             <RecordingView
               patientName={currentEncounter?.patient_name || ""}
               patientId={currentEncounter?.patient_id || ""}
-              duration={localBackendAvailable ? Math.floor(localDurationMs / 1000) : duration}
-              isPaused={localBackendAvailable ? localPaused : isPaused}
+              duration={useLocalBackend ? Math.floor(localDurationMs / 1000) : duration}
+              isPaused={useLocalBackend ? localPaused : isPaused}
               onStop={handleStopRecording}
               onPause={handlePauseRecording}
               onResume={handleResumeRecording}
@@ -950,6 +984,9 @@ function HomePageContent() {
         onClose={handleCloseSettings}
         noteLength={noteLength}
         onNoteLengthChange={handleNoteLengthChange}
+        processingMode={processingMode}
+        onProcessingModeChange={handleProcessingModeChange}
+        localBackendAvailable={localBackendAvailable}
       />
       {httpsWarning && (
         <div className="fixed top-0 left-0 right-0 z-50 bg-destructive px-4 py-2 text-center text-sm font-semibold text-destructive-foreground">

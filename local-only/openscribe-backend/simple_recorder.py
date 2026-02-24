@@ -23,6 +23,7 @@ import os
 import sys
 import time
 import threading
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -1479,6 +1480,72 @@ def pull_model(model_name):
         print(json.dumps({"success": False, "error": str(e)}))
         import sys
         sys.exit(1)
+
+
+@cli.command(name='whisper-server')
+@click.option('--host', default='127.0.0.1', show_default=True, help='Host to bind')
+@click.option('--port', default=8002, show_default=True, type=int, help='Port to bind')
+@click.option('--model', 'model_size', default='tiny.en', show_default=True, help='Whisper model size')
+@click.option('--backend', default='cpp', show_default=True, help='Whisper backend preference')
+def whisper_server(host, port, model_size, backend):
+    """Run a local Whisper transcription server for mixed mode."""
+    if not WhisperTranscriber:
+        print("ERROR: Whisper transcriber unavailable")
+        import sys
+        sys.exit(1)
+
+    try:
+        from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+        from fastapi.responses import JSONResponse
+        import uvicorn
+    except Exception as e:
+        print(f"ERROR: Missing server dependencies: {e}")
+        print("Install with: python -m pip install fastapi uvicorn[standard] python-multipart")
+        import sys
+        sys.exit(1)
+
+    os.environ["OPENSCRIBE_WHISPER_MODEL"] = model_size
+    os.environ["OPENSCRIBE_WHISPER_BACKEND"] = backend
+    os.environ.setdefault("OPENSCRIBE_WHISPER_GPU", "1")
+
+    transcriber = WhisperTranscriber(model_size=model_size)
+    app = FastAPI(title="OpenScribe Whisper Server")
+
+    @app.get("/health")
+    async def health():
+        return {"status": "healthy", **transcriber.get_backend_info()}
+
+    @app.post("/v1/audio/transcriptions")
+    async def transcribe_audio(
+        file: UploadFile = File(...),
+        model: str | None = Form(default=None),
+        response_format: str | None = Form(default="json"),
+    ):
+        del model
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty audio file")
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = Path(tmp.name)
+
+        try:
+            text = transcriber.transcribe_audio(tmp_path)
+            if text is None:
+                raise HTTPException(status_code=500, detail="Transcription failed")
+
+            if response_format == "text":
+                return text
+            return JSONResponse(content={"text": text})
+        finally:
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+
+    print(f"Starting Whisper server on http://{host}:{port} (model={model_size}, backend={backend})")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == '__main__':
