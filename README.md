@@ -10,7 +10,7 @@ Open-source AI medical scribe for recording encounters and generating structured
   <a href="https://github.com/sammargolis/OpenScribe/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="MIT License">
   </a>
-  <a href="https://discord.gg/DbgafEME">
+  <a href="https://discord.gg/BcNNspcNE8">
     <img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord">
   </a>
   <a href="https://www.loom.com/share/1ccd4eec00eb4ddab700d32734f33c28">
