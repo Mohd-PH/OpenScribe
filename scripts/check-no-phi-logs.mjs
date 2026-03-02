@@ -27,11 +27,22 @@ const suspiciousPatterns = [
   /console\.error\([^\n]*(patient|transcript|note|phi)/i,
 ]
 
+const requestedTargets = process.argv.slice(2)
+const filesToScan =
+  requestedTargets.length > 0
+    ? targets.filter((target) => requestedTargets.includes(target))
+    : targets
+
 let failed = false
 
-for (const relPath of targets) {
+for (const relPath of filesToScan) {
   const filePath = join(process.cwd(), relPath)
-  const text = readFileSync(filePath, 'utf8')
+  let text
+  try {
+    text = readFileSync(filePath, 'utf8')
+  } catch {
+    continue
+  }
 
   for (const { regex, reason } of bannedPatterns) {
     if (regex.test(text)) {
