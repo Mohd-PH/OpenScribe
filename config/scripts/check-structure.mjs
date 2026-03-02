@@ -6,12 +6,29 @@ import path from "node:path"
 
 const root = path.resolve(process.cwd())
 
-const allowedRootDirs = new Set(["apps", "packages", "config", "build", "docker", "node_modules"])
+const allowedRootDirs = new Set([
+  "apps",
+  "packages",
+  "config",
+  "build",
+  "docker",
+  "docs",
+  "infra",
+  "local-only",
+  "models",
+  "output",
+  "recordings",
+  "scripts",
+  "node_modules",
+])
 const allowedRootFiles = new Set([
   "package.json",
   "pnpm-lock.yaml",
   "tsconfig.json",
   "README.md",
+  "CONTRIBUTING.md",
+  "LICENSE",
+  "requirements.txt",
   "architecture.md",
   ".gitignore",
   "BUILD_STATUS.md",
@@ -51,6 +68,9 @@ for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
       errors.push(`Unexpected top-level directory: ${name}`)
     }
   } else {
+    if (name.endsWith(".tsbuildinfo")) {
+      continue
+    }
     if (name.startsWith(".env")) {
       continue
     }

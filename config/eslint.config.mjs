@@ -10,8 +10,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const tsconfigRootDir = path.resolve(__dirname, "..")
 const kebabCasePattern = "^[a-z0-9]+(?:-[a-z0-9]+)*$"
 
-const ignoredPaths = ["build/**", "node_modules/**", "apps/web/public/**", "apps/web/.next/**"]
-const nodeFiles = ["config/**/*.{js,mjs,cjs}", "packages/shell/**/*.js"]
+const ignoredPaths = [
+  "build/**",
+  "node_modules/**",
+  "**/.venv-*/**",
+  "**/.venv/**",
+  "apps/web/public/**",
+  "apps/web/.next/**",
+  "output/**",
+]
+const nodeFiles = ["config/**/*.{js,mjs,cjs}", "packages/shell/**/*.js", "scripts/**/*.{js,mjs,cjs}"]
 const nodeGlobals = {
   require: "readonly",
   module: "readonly",
@@ -97,7 +105,9 @@ export default tseslint.config(
     files: nodeFiles,
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ["scripts/*.js", "scripts/*.mjs", "scripts/*.cjs"],
+        },
         tsconfigRootDir,
       },
       globals: nodeGlobals,
